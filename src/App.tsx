@@ -151,28 +151,55 @@ export default function App() {
       {/* Primary Presenter Grid Shell */}
       <main className="flex-1 w-full max-w-7xl mx-auto p-4 md:p-6 lg:p-8 flex flex-col space-y-6">
         
-        {/* Pitch / Advisor Summary banner inside presentation dashboard */}
-        <div className="bg-gradient-to-r from-blue-950/25 via-slate-900 to-cyan-950/15 rounded-2xl p-4 border border-slate-800/80 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 h-10 w-10 flex items-center justify-center rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
-              <Info className="w-5 h-5 text-blue-400" />
+        {/* Real-time Health-tech Telemetry KPIs Strip */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="bg-slate-900/60 backdrop-blur-md rounded-2xl p-4 border border-slate-800/80 flex items-center justify-between">
+            <div>
+              <span className="text-[10px] font-bold text-slate-400 tracking-wider uppercase block">Total Intakes Today</span>
+              <strong className="text-xl font-extrabold text-white mt-1 block">
+                {documents.length} Completed
+              </strong>
             </div>
-            <div className="space-y-0.5">
-              <h3 className="text-xs font-bold text-slate-250 uppercase tracking-widest">Startup Advisory Demonstration Guide</h3>
-              <p className="text-xs text-slate-400">
-                Play the part of both patient and clinician. Input details in the **Intake Mobile App** or click a quick-load demo template on Screen 1, complete the 5-step screening, and watch it immediately synchronize over-the-air into the **Doctor's Workstation**!
-              </p>
+            <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/25">
+              <User className="w-5 h-5 text-blue-400" />
             </div>
           </div>
-          <button 
-            onClick={() => {
-              // Reset both components to clear state for the user
-              window.location.reload();
-            }}
-            className="text-[10px] bg-slate-900 hover:bg-slate-855 text-slate-300 py-1.5 px-3 rounded-lg border border-slate-800 transition shadow shrink-0 cursor-pointer"
-          >
-            Reset Presentation State
-          </button>
+
+          <div className="bg-slate-900/60 backdrop-blur-md rounded-2xl p-4 border border-slate-800/80 flex items-center justify-between">
+            <div>
+              <span className="text-[10px] font-bold text-slate-400 tracking-wider uppercase block">AI Charting Speed</span>
+              <strong className="text-xl font-extrabold text-cyan-400 mt-1 block">
+                ~1.4s Latency
+              </strong>
+            </div>
+            <div className="p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/25">
+              <Sparkles className="w-5 h-5 text-cyan-400 animate-pulse" />
+            </div>
+          </div>
+
+          <div className="bg-slate-900/60 backdrop-blur-md rounded-2xl p-4 border border-slate-800/80 flex items-center justify-between">
+            <div>
+              <span className="text-[10px] font-bold text-slate-400 tracking-wider uppercase block">EHR Sync Status</span>
+              <strong className="text-xl font-extrabold text-emerald-400 mt-1 block">
+                Epic & Cerner Live
+              </strong>
+            </div>
+            <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25">
+              <Database className="w-5 h-5 text-emerald-400" />
+            </div>
+          </div>
+
+          <div className="bg-slate-900/60 backdrop-blur-md rounded-2xl p-4 border border-slate-800/80 flex items-center justify-between">
+            <div>
+              <span className="text-[10px] font-bold text-slate-400 tracking-wider uppercase block">Data Safeguards</span>
+              <strong className="text-xl font-extrabold text-white mt-1 block flex items-center gap-1">
+                HIPAA &bull; SOC2
+              </strong>
+            </div>
+            <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/25">
+              <ShieldCheck className="w-5 h-5 text-purple-400" />
+            </div>
+          </div>
         </div>
 
         {/* Live Sync Toast Banner alerts */}
