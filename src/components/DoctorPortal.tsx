@@ -13,14 +13,16 @@ import {
   Printer, 
   Database, 
   AlertCircle, 
-  PlusCircle, 
-  ExternalLink,
   ClipboardCheck,
   Award,
   ChevronRight,
-  ShieldAlert
+  ShieldAlert,
+  Copy,
+  Download,
+  Check
 } from "lucide-react";
 import { DoctorDocument } from "../types";
+import { jsPDF } from "jspdf";
 
 interface DoctorPortalProps {
   documents: DoctorDocument[];
@@ -43,7 +45,7 @@ export const INITIAL_DOCTOR_DOCS: DoctorDocument[] = [
       patientName: "Clara Oswald",
       patientAge: "64",
       patientGender: "Female",
-      chiefComplaint: "Persistent wheezing and deep dry cough",
+      chiefComplaint: "Persistent wheezing and dry cough",
       symptoms: ["Dry cough", "Expiratory wheezing", "Grade 1 dyspnea on exertion", "Chest tightness"],
       duration: "10 days",
       currentMedications: "Albuterol rescue inhaler, Vitamin D3",
@@ -106,6 +108,8 @@ export default function DoctorPortal({ documents, selectedDocId, onSelectDoc, on
   const [typedNotes, setTypedNotes] = useState("");
   const [isSyncingToEHR, setIsSyncingToEHR] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  const [isCopied, setIsCopied] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   // Find currently active doc
   const activeDoc = documents.find(d => d.id === selectedDocId) || documents[0];
@@ -120,6 +124,214 @@ export default function DoctorPortal({ documents, selectedDocId, onSelectDoc, on
     if (!activeDoc) return;
     onUpdateDocStatus(activeDoc.id, 'referred', typedNotes);
     setTypedNotes("");
+  };
+
+  // Copy full intake clinical documentation to clipboard
+  const handleCopySummary = async () => {
+    if (!activeDoc) return;
+    const formattedText = `DOCTORSCRIBE AI - CLINICAL INTAKE SUMMARY
+=============================================
+Document ID: ${activeDoc.id}
+Generated: ${activeDoc.timestamp}
+
+PATIENT DEMOGRAPHICS
+Name: ${activeDoc.patientName}
+Age / Gender: ${activeDoc.patientAge} years / ${activeDoc.patientGender}
+
+INTAKE INTERVIEW HIGHLIGHTS
+Chief Complaint: ${activeDoc.chiefComplaint}
+Symptoms Identified: ${(activeDoc.summary.symptoms || []).join(", ") || "None declared"}
+Duration of Symptoms: ${activeDoc.summary.duration || "N/A"}
+Current Medications & Allergies: ${activeDoc.summary.currentMedications || "None"}
+Medical & Family History: ${activeDoc.summary.medicalHistory || "None"}
+
+STRUCTURED CLINICAL SOAP REPORT
+---------------------------------------------
+${activeDoc.summary.clinicalSummary}
+
+${activeDoc.clinicalNotes ? `\nPHYSICIAN SIGN-OFF ADDENDUM\n------------------\n${activeDoc.clinicalNotes}` : ""}
+
+=============================================
+DISCLAIMER: This tool assists with patient intake and medical documentation only and does not provide diagnosis or treatment recommendations. The attending clinician is legally responsible for verifying all facts prior to care selection.`;
+
+    try {
+      await navigator.clipboard.writeText(formattedText);
+      setIsCopied(true);
+      setTimeout(() => setIsCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy to clipboard", err);
+    }
+  };
+
+  // Generate and download formal clinicial PDF
+  const handleDownloadPDF = () => {
+    if (!activeDoc) return;
+    setIsDownloading(true);
+
+    try {
+      const doc = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+
+      let y = 15;
+      const margin = 15;
+      const width = 210 - (margin * 2);
+
+      const addText = (text: string, size = 10, isBold = false, color = [15, 23, 42], gap = 5) => {
+        doc.setFont("helvetica", isBold ? "bold" : "normal");
+        doc.setFontSize(size);
+        doc.setTextColor(color[0], color[1], color[2]);
+        const lines = doc.splitTextToSize(text, width);
+        doc.text(lines, margin, y);
+        y += (lines.length * (size * 0.35)) + gap;
+      };
+
+      // Header top accent line
+      doc.setFillColor(79, 70, 229); // indigo-600
+      doc.rect(0, 0, 210, 6, "F");
+
+      y += 5;
+
+      // Primary Title
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(20);
+      doc.setTextColor(30, 41, 59); // slate-800
+      doc.text("DoctorScribe AI", margin, y);
+      
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(100, 116, 139); // slate-500
+      doc.text("ELECTRONIC HEALTH RECORDS COMPANION", margin + 115, y - 1);
+      y += 8;
+
+      // Doc description
+      addText(`Clinical Intake & Medical Documentation Summary`, 11, true, [79, 70, 229], 3);
+      addText(`EHR Queue ID: ${activeDoc.id} | Transmission: Synced Telehealth Intake | Stamp: Yesterday / Live`, 8.5, false, [100, 116, 139], 6);
+
+      // Line divider
+      doc.setDrawColor(226, 232, 240);
+      doc.line(margin, y, 210 - margin, y);
+      y += 8;
+
+      // Patient Demographics Row Table Box
+      doc.setFillColor(248, 250, 252); // slate-50 background text
+      doc.rect(margin, y, width, 32, "F");
+      doc.rect(margin, y, width, 32, "S");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(51, 65, 85);
+      doc.text("PATIENT DISCLOSURE & DEMOGRAPHICS CARD", margin + 4, y + 6);
+
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(15, 23, 42);
+      doc.setFontSize(9.5);
+      doc.text(`Patient Name:  ${activeDoc.patientName}`, margin + 4, y + 13);
+      doc.text(`Age / Gender:  ${activeDoc.patientAge} years / ${activeDoc.patientGender}`, margin + 4, y + 19);
+      doc.text(`Phone Callback:  555-0199 (Verified)`, margin + 4, y + 25);
+      
+      doc.text(`Chief Complaint:  ${activeDoc.chiefComplaint}`, margin + width/2, y + 13);
+      doc.text(`EHR Connection:  Epic Cloud Synced (Pass)`, margin + width/2, y + 19);
+      doc.text(`Status Category:  Intake Queue Verified`, margin + width/2, y + 25);
+
+      y += 40;
+
+      // Part 1: Gathered Variables
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(79, 70, 229);
+      doc.text("1. CLINICAL SYMPTOMS & HISTORY GATHERED", margin, y);
+      y += 6;
+
+      addText(`Reported Symptoms: ${(activeDoc.summary.symptoms || []).join(", ") || "None"}`, 9.5, false, [15, 23, 42], 4);
+      addText(`Duration of Symptoms: ${activeDoc.summary.duration || "N/A"}`, 9.5, false, [15, 23, 42], 4);
+      addText(`Current Medications & Allergies: ${activeDoc.summary.currentMedications || "None declared"}`, 9.5, false, [15, 23, 42], 4);
+      addText(`Medical & Family History: ${activeDoc.summary.medicalHistory || "None declared"}`, 9.5, false, [15, 23, 42], 8);
+
+      // Part 2: Structured SOAP
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(79, 70, 229);
+      doc.text("2. GENERATED STRUCTURED CLINICAL DOCUMENTATION", margin, y);
+      y += 6;
+
+      const soapNoteText = activeDoc.summary.clinicalSummary || "No documentation generated.";
+      const linesArray = soapNoteText.split("\n");
+
+      linesArray.forEach(line => {
+        if (y > 270) {
+          doc.addPage();
+          doc.setFillColor(79, 70, 229);
+          doc.rect(0, 0, 210, 6, "F");
+          y = 20;
+        }
+
+        const isHeader = line.startsWith("#") || line.startsWith("###") || line.startsWith("**SUBJECTIVE") || line.startsWith("**OBJECTIVE") || line.startsWith("**ASSESSMENT") || line.startsWith("**PLAN");
+        if (isHeader) {
+          addText(line.replace(/[\*#]/g, "").trim(), 9.5, true, [30, 41, 59], 3.5);
+        } else {
+          addText(line.replace(/[\*]/g, "").trim(), 9, false, [15, 23, 42], 3);
+        }
+      });
+
+      y += 6;
+
+      // Part 3: Clinician Addendum if signed
+      if (activeDoc.clinicalNotes) {
+        if (y > 250) {
+          doc.addPage();
+          doc.setFillColor(79, 70, 229);
+          doc.rect(0, 0, 210, 6, "F");
+          y = 20;
+        }
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(11);
+        doc.setTextColor(79, 70, 229);
+        doc.text("3. PHYSICIAN REVIEW & STATUS PROGRESSION", margin, y);
+        y += 6;
+        addText(`Status: Signature Logged (${activeDoc.status.toUpperCase()})`, 9.5, true, [16, 185, 129], 3.5);
+        addText(`Attending Notes: ${activeDoc.clinicalNotes}`, 9, false, [15, 23, 42], 8);
+      }
+
+      // Legal clinical disclaimer warning
+      if (y > 255) {
+        doc.addPage();
+        doc.setFillColor(79, 70, 229);
+        doc.rect(0, 0, 210, 6, "F");
+        y = 20;
+      }
+
+      doc.setDrawColor(254, 226, 226); // red-100
+      doc.setFillColor(254, 242, 242); // red-50
+      doc.rect(margin, y, width, 18, "F");
+      doc.rect(margin, y, width, 18, "S");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(185, 28, 28);
+      doc.text("IMPORTANT CLINICAL INTELLIGENCE DISCLAIMER", margin + 3, y + 5);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      doc.setTextColor(153, 27, 27);
+      const disText = "This tool assists with patient intake and medical documentation only and does not provide diagnosis or treatment recommendations.";
+      const disLines = doc.splitTextToSize(disText, width - 6);
+      doc.text(disLines, margin + 3, y + 9);
+
+      // Page footer print
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      doc.setTextColor(148, 163, 184);
+      doc.text("Created with DoctorScribe AI workspace companion. Subject to administrative health safety protocols.", margin, 286);
+
+      doc.save(`DoctorScribe_Intake_${activeDoc.patientName.replace(/\s+/g, "_")}.pdf`);
+    } catch (err) {
+      console.error("PDF generation failure", err);
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   // Simulated epic/cerner synchronization protocol
@@ -141,40 +353,36 @@ export default function DoctorPortal({ documents, selectedDocId, onSelectDoc, on
     }, 1200);
   };
 
-  const printDocumentSimulation = () => {
-    window.print();
-  };
-
   return (
-    <div className="bg-slate-900 rounded-3xl border border-slate-850 p-6 flex flex-col h-full overflow-hidden text-slate-100 select-none shadow-xl">
+    <div id="doctor-workstation-panel" className="bg-white rounded-2xl border border-slate-200 p-6 flex flex-col h-full overflow-hidden text-slate-800 shadow-sm select-none">
       
       {/* Title Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-5 border-b border-slate-800">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-5 border-b border-slate-100">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
-            <span className="p-1 px-2.5 rounded-lg bg-blue-500/10 text-blue-400 text-xs font-bold font-mono tracking-wider border border-blue-500/20">
-              CLINICIAN INTERFACE PORTAL
+            <span className="p-1 px-2.5 rounded bg-indigo-50 text-indigo-700 text-[10px] font-bold font-sans tracking-wide border border-indigo-100 uppercase">
+              Clinician Workspace Suite
             </span>
-            <div className="flex items-center gap-1 text-slate-400 text-xs font-medium">
-              <Clock className="w-3.5 h-3.5" />
-              <span>Shift Active</span>
+            <div className="flex items-center gap-1 text-slate-500 text-xs font-semibold">
+              <Clock className="w-3.5 h-3.5 text-slate-400" />
+              <span>Attending Shift Active</span>
             </div>
           </div>
-          <h2 className="text-xl font-extrabold tracking-tight">DoctorScribe Workstation</h2>
-          <p className="text-xs text-slate-400">Review AI Intake reports, sign off clinical SOAP summaries, and transmit directly to Epic/Cerner EHR.</p>
+          <h2 className="text-xl font-bold tracking-tight text-slate-900">DoctorScribe EHR Workstation</h2>
+          <p className="text-xs text-slate-550">Review telehealth check-ins, approve structured SOAP logs, and export securely to the hospital's central database.</p>
         </div>
 
         {/* Sync counters */}
         <div className="flex items-center gap-3">
-          <div className="bg-slate-950/80 rounded-xl px-4 py-2 border border-slate-800 text-center">
-            <div className="text-[10px] text-slate-400 font-bold block">PENDING REVIEW</div>
-            <div className="text-lg font-black text-blue-400 animate-pulse">
+          <div className="bg-slate-50 rounded-xl px-4 py-2 border border-slate-200 text-center">
+            <div className="text-[10px] text-slate-500 font-bold block">PENDING INTAKES</div>
+            <div className="text-lg font-extrabold text-indigo-600 animate-pulse">
               {documents.filter(d => d.status === 'pending').length}
             </div>
           </div>
-          <div className="bg-slate-950/80 rounded-xl px-3.5 py-2 border border-slate-800 text-center">
-            <div className="text-[10px] text-slate-400 font-bold block">SIGNED TODAY</div>
-            <div className="text-lg font-black text-emerald-400">
+          <div className="bg-slate-50 rounded-xl px-3.5 py-2 border border-slate-200 text-center">
+            <div className="text-[10px] text-slate-500 font-bold block">SIGNED TODAY</div>
+            <div className="text-lg font-extrabold text-emerald-600">
               {documents.filter(d => d.status === 'signed').length}
             </div>
           </div>
@@ -185,15 +393,15 @@ export default function DoctorPortal({ documents, selectedDocId, onSelectDoc, on
         
         {/* LEFT COLUMN: Synced Patients Log (35%) */}
         <div className="lg:col-span-4 flex flex-col space-y-3 overflow-y-auto pr-1">
-          <span className="text-[11px] font-bold text-slate-400 tracking-wider uppercase block pb-1">
-            Incoming Mobile Intake Stream
+          <span className="text-[10px] font-bold text-slate-400 tracking-wider uppercase block pb-1">
+            Active Digital Intake Live Queue
           </span>
           
           <div className="space-y-2.5">
             {documents.length === 0 ? (
-              <div className="p-8 text-center bg-slate-950/30 rounded-2xl border border-dashed border-slate-800 text-slate-500 flex flex-col items-center justify-center space-y-2">
-                <ShieldAlert className="w-8 h-8 text-slate-700" />
-                <span className="text-xs">No active intakes transmitted yet. Use the mobile app model on the left to start first.</span>
+              <div className="p-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-slate-400 flex flex-col items-center justify-center space-y-2">
+                <ShieldAlert className="w-8 h-8 text-slate-300" />
+                <span className="text-xs">No active intakes transmitted yet. Enter details inside the simulator to initiate.</span>
               </div>
             ) : (
               documents.map((doc) => {
@@ -204,46 +412,46 @@ export default function DoctorPortal({ documents, selectedDocId, onSelectDoc, on
                     key={doc.id}
                     onClick={() => onSelectDoc(doc.id)}
                     whileHover={{ scale: 1.01 }}
-                    className={`p-3.5 rounded-2xl cursor-pointer border transition-all relative ${
+                    className={`p-3.5 rounded-xl cursor-pointer border transition-all relative ${
                       isSelected 
-                        ? 'bg-blue-950/40 border-blue-500/80 shadow-md shadow-blue-500/5' 
-                        : 'bg-slate-950/50 border-slate-850 hover:bg-slate-950 hover:border-slate-800'
+                        ? 'bg-indigo-50/70 border-indigo-300 shadow-sm' 
+                        : 'bg-slate-50/50 border-slate-200 hover:bg-slate-50 hover:border-slate-300'
                     }`}
                   >
                     {/* Live Highlight Tag */}
                     {isSentLive && doc.status === 'pending' && (
-                      <span className="absolute -top-1.5 -right-1.5 bg-cyan-500 text-white font-extrabold text-[8px] py-0.5 px-2 rounded-full uppercase tracking-wider animate-bounce flex items-center gap-0.5">
-                        <Cpu className="w-2.5 h-2.5" /> LIVE INTAKE
+                      <span className="absolute -top-1.5 -right-1.5 bg-indigo-600 text-white font-bold text-[8px] py-0.5 px-2 rounded-full uppercase tracking-wider animate-bounce flex items-center gap-0.5">
+                        <Cpu className="w-2.5 h-2.5" /> LIVE STREAM
                       </span>
                     )}
 
                     <div className="flex items-center justify-between pb-1">
                       <div className="flex items-center gap-1.5">
                         <User className="w-3.5 h-3.5 text-slate-400" />
-                        <span className="text-xs font-bold text-slate-200">{doc.patientName}</span>
+                        <span className="text-[12px] font-bold text-slate-800">{doc.patientName}</span>
                       </div>
-                      <span className="text-[9px] text-slate-500 font-mono">{doc.timestamp}</span>
+                      <span className="text-[9px] text-slate-500 font-mono font-semibold">{doc.timestamp}</span>
                     </div>
 
-                    <p className="text-[11px] text-slate-400 line-clamp-1 italic">
+                    <p className="text-[11px] text-slate-500 line-clamp-1 italic">
                       "{doc.chiefComplaint}"
                     </p>
 
-                    <div className="flex items-center justify-between pt-2.5 mt-2 border-t border-slate-900">
-                      <span className="text-[9px] font-mono text-slate-500">{doc.id}</span>
+                    <div className="flex items-center justify-between pt-2 mt-2 border-t border-slate-100">
+                      <span className="text-[9px] font-mono font-medium text-slate-400">{doc.id}</span>
                       
                       {/* Badge indicator */}
                       <div>
                         {doc.status === 'pending' ? (
-                          <span className="text-[9px] bg-blue-900/40 text-blue-300 font-bold py-0.5 px-2 rounded-full border border-blue-800/30 flex items-center gap-1">
+                          <span className="text-[8px] bg-amber-50 text-amber-700 font-bold py-0.5 px-2 rounded-full border border-amber-200 flex items-center gap-1">
                             <Clock className="w-2.5 h-2.5" /> Queue Pending
                           </span>
                         ) : doc.status === 'signed' ? (
-                          <span className="text-[9px] bg-emerald-950/60 text-emerald-300 font-bold py-0.5 px-2 rounded-full border border-emerald-900/30 flex items-center gap-1">
-                            <CheckCircle className="w-2.5 h-2.5" /> Approved / EHR Final
+                          <span className="text-[8px] bg-emerald-50 text-emerald-700 font-bold py-0.5 px-2 rounded-full border border-emerald-200 flex items-center gap-1">
+                            <CheckCircle className="w-2.5 h-2.5" /> Signed & EHR Verified
                           </span>
                         ) : (
-                          <span className="text-[9px] bg-amber-950/60 text-amber-300 font-bold py-0.5 px-2 rounded-full border border-amber-900/30 flex items-center gap-1">
+                          <span className="text-[8px] bg-slate-105 text-slate-600 font-bold py-0.5 px-2 rounded-full border border-slate-200 flex items-center gap-1">
                             <ArrowUpRight className="w-2.5 h-2.5" /> Referred Out
                           </span>
                         )}
@@ -257,122 +465,172 @@ export default function DoctorPortal({ documents, selectedDocId, onSelectDoc, on
         </div>
 
         {/* RIGHT COLUMN: Interactive Document detail panel (65%) */}
-        <div className="lg:col-span-8 flex flex-col min-h-64 lg:h-full bg-slate-950 rounded-2xl border border-slate-850 overflow-hidden">
+        <div className="lg:col-span-8 flex flex-col min-h-64 lg:h-full bg-slate-50 rounded-xl border border-slate-200 overflow-hidden">
           {activeDoc ? (
-            <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="flex-1 flex flex-col overflow-hidden bg-white">
               
               {/* Document Sub-Header bar */}
-              <div className="bg-slate-900/70 p-4 border-b border-slate-850 flex items-center justify-between flex-wrap gap-2 text-xs">
+              <div className="bg-slate-50 p-4 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2 text-xs">
                 <div className="flex items-center space-x-2">
-                  <FileText className="w-4 h-4 text-cyan-400" />
-                  <span className="font-mono text-[11px] font-bold tracking-wide text-slate-300">
-                    DIAGNOSTIC WORKBENCH &bull; {activeDoc.id}
+                  <FileText className="w-4 h-4 text-indigo-600" />
+                  <span className="font-sans text-[11px] font-bold tracking-wide text-slate-700">
+                    DIAGNOSTIC CASE RECORDER &bull; {activeDoc.id}
                   </span>
                 </div>
-                <div className="flex items-center space-x-1">
-                  <span className="text-slate-400">File Age:</span>
-                  <strong className="text-slate-200">Freshly Synced</strong>
+                <div className="flex items-center space-x-1 text-slate-500 font-semibold">
+                  <span>File State:</span>
+                  <strong className="text-slate-700 font-bold">Active Demographics</strong>
                 </div>
               </div>
 
               {/* Editable SOAP Report layout */}
               <div className="flex-1 overflow-y-auto p-5 space-y-5">
                 
-                {/* Alert Notification for Intake origin */}
+                {/* Alert Notification for Intake or live origin */}
                 {(!INITIAL_DOCTOR_DOCS.find(d => d.id === activeDoc.id)) && (
-                  <div className="p-3 rounded-xl bg-blue-950/35 border border-blue-900/50 flex gap-2.5">
-                    <Cpu className="w-5 h-5 text-cyan-400 shrink-0" />
-                    <div className="text-[11px] leading-relaxed text-blue-300 font-medium">
-                      <strong>AI Scribe Event Stream:</strong> This intake document was completed via the patient's remote mobile intake app and automatically generated with Gemini's raw clinical SOAP analyzer.
+                  <div className="p-3 rounded-lg bg-indigo-50/70 border border-indigo-100 flex gap-2.5">
+                    <Cpu className="w-5 h-5 text-indigo-600 shrink-0" />
+                    <div className="text-[11px] leading-relaxed text-indigo-900 font-medium">
+                      <strong>Digital Stream Registered:</strong> This record was processed from the Patient-End Check-In Screen with a HIPAA-isolated telemetry handshake.
                     </div>
                   </div>
                 )}
 
                 {/* Patient Primary Details Banner */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4 rounded-xl bg-slate-900/50 border border-slate-850 text-xs">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs">
                   <div>
-                    <span className="text-slate-400 font-medium block">Patient Name</span>
-                    <strong className="text-slate-100 font-bold">{activeDoc.patientName}</strong>
+                    <span className="text-slate-500 font-semibold block">Patient Name</span>
+                    <strong className="text-slate-800 font-bold">{activeDoc.patientName}</strong>
                   </div>
                   <div>
-                    <span className="text-slate-400 font-medium block">Age / Gender</span>
-                    <strong className="text-slate-100 font-bold">{activeDoc.patientAge} years, {activeDoc.patientGender}</strong>
+                    <span className="text-slate-500 font-semibold block">Age / Gender</span>
+                    <strong className="text-slate-800 font-bold">{activeDoc.patientAge} years, {activeDoc.patientGender}</strong>
                   </div>
                   <div>
-                    <span className="text-slate-400 font-medium block">Primary Complaint</span>
-                    <strong className="text-slate-100 font-bold line-clamp-1">{activeDoc.chiefComplaint}</strong>
+                    <span className="text-slate-500 font-semibold block">Primary Complaint</span>
+                    <strong className="text-slate-800 font-bold line-clamp-1">{activeDoc.chiefComplaint}</strong>
                   </div>
                   <div>
-                    <span className="text-slate-400 font-medium block">Transmission</span>
-                    <strong className="text-slate-100 font-bold flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> Mobile Scribe ID
+                    <span className="text-slate-500 font-semibold block">EHR Verification</span>
+                    <strong className="text-slate-800 font-bold flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Active Health ID
                     </strong>
                   </div>
                 </div>
 
-                {/* Core medical variables summary log */}
+                {/* Core medical variables summary log: 8 Required Fields shown elegantly */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="p-3.5 bg-slate-900 rounded-xl border border-slate-850 text-xs space-y-1.5">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Intake Interview Checklist</span>
-                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                  
+                  {/* Variables Frame 1: Symptoms and Duration */}
+                  <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-2">
+                    <span className="text-[10px] font-bold text-indigo-700 uppercase tracking-wide block border-b border-indigo-100/60 pb-1">
+                      1. Symptoms & Course Timeline
+                    </span>
+                    <div className="space-y-1.5 text-[11px]">
                       <div>
-                        <span className="text-slate-500 block font-bold">SYMPTOMS</span>
+                        <span className="text-slate-500 font-bold block">RECOGNIZED SYMPTOMS:</span>
                         <div className="flex flex-wrap gap-1 mt-1">
                           {activeDoc.summary.symptoms.map((s, index) => (
-                            <span key={index} className="text-[9px] bg-slate-950 hover:bg-slate-900 text-slate-300 px-1.5 py-0.5 rounded border border-slate-800">
+                            <span key={index} className="text-[10px] bg-white text-slate-700 px-2 py-0.5 rounded border border-slate-200 font-medium">
                               {s}
                             </span>
                           ))}
                         </div>
                       </div>
-                      <div>
-                        <span className="text-slate-500 block font-bold">DURATION</span>
-                        <p className="text-slate-200 mt-1">{activeDoc.summary.duration}</p>
+                      <div className="pt-1">
+                        <span className="text-slate-500 font-bold block">DURATION OF SYMPTOMS:</span>
+                        <p className="text-slate-700 font-medium mt-0.5">{activeDoc.summary.duration}</p>
                       </div>
                     </div>
                   </div>
 
-                  <div className="p-3.5 bg-slate-900 rounded-xl border border-slate-850 text-xs space-y-1.5">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Risk Variables & Baseline</span>
-                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                  {/* Variables Frame 2: Medications & Clinical History */}
+                  <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-2">
+                    <span className="text-[10px] font-bold text-indigo-700 uppercase tracking-wide block border-b border-indigo-100/60 pb-1">
+                      2. Medications & Medical History
+                    </span>
+                    <div className="space-y-1.5 text-[11px]">
                       <div>
-                        <span className="text-slate-500 block font-bold">MEDS & ALLERGIES</span>
-                        <p className="text-slate-200 mt-1 leading-tight line-clamp-2">{activeDoc.summary.currentMedications}</p>
+                        <span className="text-slate-500 font-bold block">CURRENT MEDICATIONS & ALLERGIES:</span>
+                        <p className="text-slate-755 font-medium mt-0.5 leading-tight">{activeDoc.summary.currentMedications || "None declared"}</p>
                       </div>
                       <div>
-                        <span className="text-slate-500 block font-bold">MEDICAL HISTORY</span>
-                        <p className="text-slate-200 mt-1 leading-tight line-clamp-2">{activeDoc.summary.medicalHistory}</p>
+                        <span className="text-slate-500 font-bold block">MEDICAL / FAMILY HISTORY:</span>
+                        <p className="text-slate-755 font-medium mt-0.5 leading-tight">{activeDoc.summary.medicalHistory || "No pre-existing history registered"}</p>
                       </div>
                     </div>
                   </div>
                 </div>
 
                 {/* Displaying AI Generated Clinical SOAP Note content */}
-                <div className="space-y-1.5">
-                  <span className="text-[11px] font-bold text-slate-400 tracking-wider block uppercase">
-                    AI Clinical SOAP documentation
-                  </span>
-                  <div className="p-4 bg-slate-900 rounded-xl border border-slate-800 font-mono text-xs leading-relaxed text-slate-300 whitespace-pre-wrap max-h-[300px] overflow-y-auto">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-slate-400 tracking-wider block uppercase">
+                      Clinician SOAP Note Output
+                    </span>
+                    
+                    {/* ENHANCEMENTS: Copy & Download tools inside Doctor Workstation details */}
+                    <div className="flex items-center space-x-2">
+                      <button
+                        type="button"
+                        onClick={handleCopySummary}
+                        className={`py-1 px-2.5 rounded text-[10px] font-bold flex items-center gap-1 shadow-sm transition-all border ${
+                          isCopied 
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                            : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200 cursor-pointer'
+                        }`}
+                      >
+                        {isCopied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3 text-slate-500" />}
+                        <span>{isCopied ? "Copied Summary!" : "Copy Summary Text"}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleDownloadPDF}
+                        disabled={isDownloading}
+                        className="py-1 px-2.5 rounded bg-white hover:bg-slate-50 text-slate-700 font-bold text-[10px] flex items-center gap-1 shadow-sm border border-slate-200 cursor-pointer"
+                      >
+                        {isDownloading ? (
+                          <div className="w-3 h-3 rounded-full border border-dashed border-slate-500 animate-spin" />
+                        ) : (
+                          <Download className="w-3 h-3 text-slate-500" />
+                        )}
+                        <span>Download Clinical PDF</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* SOAP report visual page layout */}
+                  <div className="p-4.5 bg-slate-50 rounded-xl border border-slate-200 font-mono text-[11.5px] leading-relaxed text-slate-700 whitespace-pre-wrap max-h-[350px] overflow-y-auto">
                     {activeDoc.summary.clinicalSummary}
                   </div>
                 </div>
 
+                {/* Patient Safety Warning Disclaimer */}
+                <div className="p-3.5 rounded-lg bg-red-50 border border-red-100 flex gap-2 w-full">
+                  <ShieldAlert className="w-4.5 h-4.5 text-red-600 shrink-0 mt-0.5" />
+                  <div className="text-[10.5px] text-red-800 leading-relaxed font-medium">
+                    <strong className="block font-bold pb-0.5 uppercase tracking-wide">Patient Safety & Diagnostic Disclaimer</strong>
+                    This tool assists with patient intake and medical documentation only and does not provide diagnosis or treatment recommendations. The attending clinician assumes full diagnostic legal responsibilities.
+                  </div>
+                </div>
+
                 {/* Doctor's Addendum Notes */}
-                <div className="space-y-2 pt-2">
-                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Physician Addendum / Clinical Review</span>
+                <div className="space-y-2 pt-1">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Physician Custom Addendum / Directives</span>
                   {activeDoc.status === 'signed' ? (
-                    <div className="p-3 rounded-lg bg-emerald-950/20 border border-emerald-900/35 text-xs">
-                      <span className="text-[10px] font-bold text-emerald-400 uppercase block pb-1">Signed Doctor Note</span>
-                      <p className="text-slate-200 italic">"{activeDoc.clinicalNotes || "Approved and finalized without secondary notes."}"</p>
-                      <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-bold pt-2 mt-2 border-t border-emerald-900/30">
-                        <Award className="w-4 h-4" />
-                        <span>Electronically Signed by Clinician Workspace Scribe Protocol</span>
+                    <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-100 text-xs">
+                      <span className="text-[10px] font-bold text-emerald-700 uppercase block pb-1">ELECTRONICALLY SIGNED ADDENDUM</span>
+                      <p className="text-slate-700 italic font-medium">"{activeDoc.clinicalNotes || "Approved and finalized without secondary notes."}"</p>
+                      <div className="flex items-center gap-1.5 text-[11px] text-emerald-700 font-bold pt-2 mt-2 border-t border-emerald-100">
+                        <Award className="w-4 h-4 text-emerald-600" />
+                        <span>Electronically Signed by Clinician Digital Scribe Protocol</span>
                       </div>
                     </div>
                   ) : activeDoc.status === 'referred' ? (
-                    <div className="p-3 rounded-lg bg-amber-950/20 border border-amber-900/35 text-xs">
-                      <span className="text-[10px] font-bold text-amber-400 uppercase block pb-1">Refferal Outbox Instruction</span>
-                      <p className="text-slate-200 italic">"{activeDoc.clinicalNotes || "Referred to secondary provider/hospital context."}"</p>
+                    <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+                      <span className="text-[10px] font-bold text-slate-600 uppercase block pb-1">REFERRED RECORD SENT OUT</span>
+                      <p className="text-slate-700 italic font-medium">"{activeDoc.clinicalNotes || "Referred to secondary specialist."}"</p>
                     </div>
                   ) : (
                     <div className="space-y-1.5">
@@ -380,36 +638,36 @@ export default function DoctorPortal({ documents, selectedDocId, onSelectDoc, on
                         rows={2}
                         value={typedNotes}
                         onChange={(e) => setTypedNotes(e.target.value)}
-                        placeholder="Add secondary physician notes, modify diagnosis plan prescriptions, or specify review alerts..."
-                        className="w-full bg-slate-900 border border-slate-850 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-blue-500 placeholder-slate-650"
+                        placeholder="Add secondary physician notes, modify care pathways, or insert referral notes prior to final signoff..."
+                        className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs text-slate-800 focus:outline-none focus:border-indigo-500 placeholder-slate-400"
                       />
                     </div>
                   )}
                 </div>
 
-                {/* Synced Integrations panel */}
-                <div className="p-4 rounded-xl bg-slate-900 border border-slate-850 text-xs space-y-2.5">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Direct EHR Database Syncer</span>
+                {/* Synced EHR Integrations panel */}
+                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-2.5">
+                  <span className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wide block">Direct Hospital EHR Synchronizer</span>
                   <div className="flex flex-wrap gap-2">
                     <button 
                       onClick={() => triggerEHRSync('Epic')}
                       disabled={isSyncingToEHR}
-                      className="py-1 px-3 bg-slate-950 hover:bg-slate-900 border border-slate-800 hover:border-slate-700 text-[10px] text-slate-300 rounded font-semibold flex items-center gap-1 cursor-pointer"
+                      className="py-1 px-3 bg-white hover:bg-slate-50 border border-slate-200 text-[10px] text-slate-600 rounded font-semibold flex items-center gap-1 shadow-xs cursor-pointer"
                     >
-                      <Database className="w-3.5 h-3.5 text-orange-400" /> Integrate EHR (Epic)
+                      <Database className="w-3.5 h-3.5 text-orange-500" /> Transmit EHR (Epic)
                     </button>
                     <button 
                       onClick={() => triggerEHRSync('Cerner')}
                       disabled={isSyncingToEHR}
-                      className="py-1 px-3 bg-slate-950 hover:bg-slate-900 border border-slate-800 hover:border-slate-700 text-[10px] text-slate-300 rounded font-semibold flex items-center gap-1 cursor-pointer"
+                      className="py-1 px-3 bg-white hover:bg-slate-50 border border-slate-200 text-[10px] text-slate-600 rounded font-semibold flex items-center gap-1 shadow-xs cursor-pointer"
                     >
-                      <Database className="w-3.5 h-3.5 text-blue-400" /> Integrate EHR (Cerner)
+                      <Database className="w-3.5 h-3.5 text-blue-500" /> Transmit EHR (Cerner)
                     </button>
                     <button 
-                      onClick={printDocumentSimulation}
-                      className="py-1 px-3 bg-slate-950 hover:bg-slate-900 border border-slate-800 hover:border-slate-700 text-[10px] text-slate-300 rounded font-semibold flex items-center gap-1 cursor-pointer"
+                      onClick={handleDownloadPDF}
+                      className="py-1 px-3 bg-white hover:bg-slate-50 border border-slate-200 text-[10px] text-slate-600 rounded font-semibold flex items-center gap-1 shadow-xs cursor-pointer"
                     >
-                      <Printer className="w-3.5 h-3.5 text-cyan-400" /> Save PDF / Print
+                      <Printer className="w-3.5 h-3.5 text-indigo-500" /> Print / Save PDF Copy
                     </button>
                   </div>
 
@@ -417,9 +675,9 @@ export default function DoctorPortal({ documents, selectedDocId, onSelectDoc, on
                     <motion.div 
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: "auto" }}
-                      className="p-2.5 rounded bg-blue-950/40 border border-blue-900/60 font-mono text-[9px] text-blue-400 flex items-center gap-2"
+                      className="p-2.5 rounded bg-indigo-50 border border-indigo-100 font-mono text-[9px] text-indigo-700 flex items-center gap-2"
                     >
-                      <Cpu className="w-3.5 h-3.5 text-cyan-400 animate-spin" />
+                      <Cpu className="w-3.5 h-3.5 text-indigo-600 animate-spin" />
                       <span>{syncStatus}</span>
                     </motion.div>
                   )}
@@ -429,28 +687,28 @@ export default function DoctorPortal({ documents, selectedDocId, onSelectDoc, on
 
               {/* Detail Footer workstation primary actions */}
               {activeDoc.status === 'pending' && (
-                <div className="p-4 bg-slate-900/80 border-t border-slate-850 flex items-center justify-end gap-3">
+                <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-3">
                   <button 
                     onClick={handleRefer}
-                    className="py-2.5 px-4 bg-amber-950/30 border border-amber-900 hover:bg-amber-950/60 text-slate-200 font-semibold text-xs rounded-xl flex items-center gap-1 cursor-pointer"
+                    className="py-2.5 px-4 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 font-semibold text-xs rounded-xl flex items-center gap-1 cursor-pointer"
                   >
-                    Refer to Specialist
+                    Flag for Referral
                   </button>
                   
                   <button 
                     onClick={handleSignOff}
-                    className="py-2.5 px-5 bg-blue-600 hover:bg-blue-500 font-bold text-xs rounded-xl flex items-center gap-1 shadow-lg shadow-blue-500/10 cursor-pointer"
+                    className="py-2.5 px-5 bg-indigo-600 hover:bg-indigo-500 font-bold text-xs text-white rounded-xl flex items-center gap-1 shadow-sm hover:shadow active:scale-98 transition-all cursor-pointer"
                   >
-                    <ClipboardCheck className="w-4 h-4" /> Approved SOAP Note & Sign Off
+                    <ClipboardCheck className="w-4 h-4 text-indigo-100" /> Sign Off SOAP Documentation & Finalize
                   </button>
                 </div>
               )}
 
             </div>
           ) : (
-            <div className="flex-1 flex flex-col justify-center items-center p-8 text-center text-slate-500 space-y-2">
-              <FileText className="w-12 h-12 text-slate-800" />
-              <span>Select a patient intake document from the stream queue to inspect clinical files.</span>
+            <div className="flex-1 flex flex-col justify-center items-center p-8 text-center text-slate-400 space-y-2">
+              <FileText className="w-12 h-12 text-slate-200" />
+              <span>Select an intake record from the live queue stream to initiate.</span>
             </div>
           )}
         </div>

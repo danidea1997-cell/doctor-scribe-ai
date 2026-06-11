@@ -1,6 +1,6 @@
 {
   "name": "DoctorScribe AI",
   "description": "An interactive high-fidelity startup MVP prototype of an AI Patient Intake & Medical Documentation assistant, featuring persistent simulation, live Gemini clinical parsing, and a doctor workspace portal.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

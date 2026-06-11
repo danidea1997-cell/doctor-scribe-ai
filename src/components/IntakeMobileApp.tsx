@@ -16,9 +16,16 @@ import {
   AlertCircle, 
   PhoneCall, 
   ChevronRight, 
-  HeartHandshake
+  HeartHandshake,
+  Mic,
+  MicOff,
+  Volume2,
+  FileText,
+  Copy,
+  Download
 } from "lucide-react";
 import { Message, IntakeSummary, ScreeningStep, DoctorDocument } from "../types";
+import { jsPDF } from "jspdf";
 
 interface IntakeMobileAppProps {
   onSendToDoctor: (doc: DoctorDocument) => void;
@@ -44,6 +51,12 @@ export default function IntakeMobileApp({ onSendToDoctor, isBackendHealthy, isUs
   const [patientGender, setPatientGender] = useState("Male");
   const [chiefComplaintInput, setChiefComplaintInput] = useState("Severe headache with low-grade fever");
   
+  // High-fidelity patient registration additions
+  const [registrationMode, setRegistrationMode] = useState<'onboarding' | 'form' | 'card'>('onboarding');
+  const [patientPhone, setPatientPhone] = useState("555-0199");
+  const [patientInsurance, setPatientInsurance] = useState("United Healthcare");
+  const [isVerifyingCard, setIsVerifyingCard] = useState(false);
+  
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [isTyping, setIsTyping] = useState(false);
@@ -53,9 +66,116 @@ export default function IntakeMobileApp({ onSendToDoctor, isBackendHealthy, isUs
   const [compiledSummary, setCompiledSummary] = useState<IntakeSummary | null>(null);
   const [isEditingSummary, setIsEditingSummary] = useState(false);
   const [hasSentToDoctor, setHasSentToDoctor] = useState(false);
+  const [isCopiedInMobile, setIsCopiedInMobile] = useState(false);
   
   // UI clock state
   const [mobileTime, setMobileTime] = useState("10:00 AM");
+
+  // Native Physician Scribe Dictation State
+  const [activeAppTab, setActiveAppTab] = useState<'intake' | 'scribe'>('intake');
+  const [isRecording, setIsRecording] = useState(false);
+  const [scribeTranscript, setScribeTranscript] = useState("");
+  const [interimTranscript, setInterimTranscript] = useState("");
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  
+  const recognitionRef = useRef<any>(null);
+  const recordingTimerRef = useRef<any>(null);
+
+  // Sync references to prevent stale closures in audio event handlers
+  const isRecordingRef = useRef(isRecording);
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+  }, [isRecording]);
+
+  const startRecording = async () => {
+    setScribeTranscript("");
+    setInterimTranscript("");
+    setRecordingSeconds(0);
+    setIsRecording(true);
+    isRecordingRef.current = true;
+    
+    try {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        const rec = new SpeechRecognition();
+        rec.continuous = true;
+        rec.interimResults = true;
+        rec.lang = "en-US";
+
+        rec.onresult = (event: any) => {
+          let finalTrans = "";
+          let interimTrans = "";
+          for (let i = 0; i < event.results.length; ++i) {
+            const transcript = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+              finalTrans += transcript + " ";
+            } else {
+              interimTrans += transcript;
+            }
+          }
+          setScribeTranscript(finalTrans);
+          setInterimTranscript(interimTrans);
+        };
+
+        rec.onerror = (e: any) => {
+          console.warn("Speech recognition error:", e);
+          if (e.error === 'not-allowed') {
+            setScribeTranscript(prev => 
+              prev + " [Microphone access is blocked in the iframe sandbox. To evaluate real voice dictation, click the 'Open in New Tab' icon at the top right of AI Studio]"
+            );
+          }
+        };
+
+        rec.onend = () => {
+          // If the user hasn't actively clicked stop recording, auto-start again to bypass silence cutoff
+          if (isRecordingRef.current) {
+            try {
+              rec.start();
+            } catch (err) {
+              console.warn("Could not auto-restart speech recognition:", err);
+            }
+          }
+        };
+
+        recognitionRef.current = rec;
+        rec.start();
+      } else {
+        setScribeTranscript("Speech recognition is not supported in this browser. Please use Chrome/Safari or type clinical notes directly.");
+      }
+    } catch (e) {
+      console.error("Speech recognition startup error:", e);
+    }
+    
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    recordingTimerRef.current = setInterval(() => {
+      setRecordingSeconds(prev => prev + 1);
+    }, 1000);
+  };
+
+  const stopRecording = () => {
+    setIsRecording(false);
+    isRecordingRef.current = false;
+    setInterimTranscript("");
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+    }
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {
+        // Already stopped
+      }
+    }
+  };
+
+  // Clean timer on unmount
+  useEffect(() => {
+    return () => {
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+      }
+    };
+  }, []);
 
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
@@ -97,20 +217,28 @@ export default function IntakeMobileApp({ onSendToDoctor, isBackendHealthy, isUs
       setPatientName("Alex Mercer");
       setPatientAge("34");
       setPatientGender("Male");
+      setPatientPhone("555-0199");
+      setPatientInsurance("United Healthcare");
       setChiefComplaintInput("Severe headache and low-grade fever");
-      startConsultation("Alex Mercer", "34", "Male", "Severe headache and low-grade fever");
+      setRegistrationMode('card');
     } else if (choice.includes("Flu Symptoms")) {
       setPatientName("Jordan Vance");
       setPatientAge("29");
       setPatientGender("Non-binary");
+      setPatientPhone("555-0456");
+      setPatientInsurance("Aetna Bronze");
       setChiefComplaintInput("Extreme fatigue and allergy congestion");
-      startConsultation("Jordan Vance", "29", "Non-binary", "Extreme fatigue and allergy congestion");
+      setRegistrationMode('card');
+    } else if (choice.includes("Clara Oswald") || choice.toLowerCase().includes("clara")) {
+      setPatientName("Clara Oswald");
+      setPatientAge("64");
+      setPatientGender("Female");
+      setPatientPhone("555-0321");
+      setPatientInsurance("Medicare Core Gold");
+      setChiefComplaintInput("Persistent wheezing and deep dry cough");
+      setRegistrationMode('card');
     } else {
-      // Prompt user to inspect inputs
-      const elements = document.getElementById("mobile-intro-form");
-      if (elements) {
-        elements.scrollIntoView({ behavior: 'smooth' });
-      }
+      setRegistrationMode('form');
     }
   };
 
@@ -257,6 +385,73 @@ export default function IntakeMobileApp({ onSendToDoctor, isBackendHealthy, isUs
     setHasSentToDoctor(true);
   };
 
+  const handleCopyMobile = async () => {
+    if (!compiledSummary) return;
+    const formattedText = `DOCTORSCRIBE AI - MEDICAL SUMMARY
+Patient Name: ${compiledSummary.patientName}
+Age/Gender: ${compiledSummary.patientAge}y / ${compiledSummary.patientGender}
+Chief Complaint: ${compiledSummary.chiefComplaint}
+symptoms: ${(compiledSummary.symptoms || []).join(", ")}
+Duration: ${compiledSummary.duration}
+Current Medications: ${compiledSummary.currentMedications}
+Medical History: ${compiledSummary.medicalHistory}
+
+CLINICAL SOAP NOTE
+-----------------
+${compiledSummary.clinicalSummary}
+
+DISCLAIMER: This tool assists with patient intake and medical documentation only and does not provide diagnosis or treatment recommendations.`;
+
+    try {
+      await navigator.clipboard.writeText(formattedText);
+      setIsCopiedInMobile(true);
+      setTimeout(() => setIsCopiedInMobile(false), 2000);
+    } catch (_) {}
+  };
+
+  const handleDownloadPDFMobile = () => {
+    if (!compiledSummary) return;
+    try {
+      const doc = new jsPDF();
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(16);
+      doc.text("DoctorScribe AI - Intake Summary", 15, 15);
+      
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.text(`Patient Full Name: ${compiledSummary.patientName}`, 15, 25);
+      doc.text(`Age / Gender: ${compiledSummary.patientAge} years / ${compiledSummary.patientGender}`, 15, 31);
+      doc.text(`Chief Complaint: ${compiledSummary.chiefComplaint}`, 15, 37);
+      doc.text(`Symptoms Identified: ${(compiledSummary.symptoms || []).join(", ")}`, 15, 43);
+      doc.text(`Duration: ${compiledSummary.duration}`, 15, 49);
+      doc.text(`Current Medications: ${compiledSummary.currentMedications}`, 15, 55);
+      doc.text(`Medical History: ${compiledSummary.medicalHistory}`, 15, 61);
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      doc.text("Structured Clinical SOAP Documentation", 15, 75);
+      
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      const lines = doc.splitTextToSize(compiledSummary.clinicalSummary || "No documentation generated", 180);
+      doc.text(lines, 15, 82);
+
+      // Warning disclaimer
+      doc.setFillColor(254, 242, 242);
+      doc.rect(15, 230, 180, 20, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(185, 28, 28);
+      doc.text("IMPORTANT CLINICAL INTELLIGENCE DISCLAIMER", 18, 236);
+      doc.setFont("helvetica", "normal");
+      const warningStr = "This tool assists with patient intake and medical documentation only and does not provide diagnosis or treatment recommendations.";
+      const warningLines = doc.splitTextToSize(warningStr, 174);
+      doc.text(warningLines, 18, 241);
+
+      doc.save(`Intake_Scribe_Mobile_${compiledSummary.patientName.replace(/\s+/g, "_")}.pdf`);
+    } catch (_) {}
+  };
+
   const getStepProgressIndex = () => {
     switch (step) {
       case 'chat_complaint': return 1;
@@ -270,6 +465,7 @@ export default function IntakeMobileApp({ onSendToDoctor, isBackendHealthy, isUs
 
   const resetAll = () => {
     setStep('welcome');
+    setRegistrationMode('onboarding');
     setMessages([]);
     setCompiledSummary(null);
     setHasSentToDoctor(false);
@@ -325,11 +521,41 @@ export default function IntakeMobileApp({ onSendToDoctor, isBackendHealthy, isUs
         </div>
 
         {/* Screens Outlet */}
-        <div className="flex-1 overflow-hidden relative flex flex-col bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 pt-6">
+        <div className="flex-1 overflow-hidden relative flex flex-col bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 pt-3">
+          
+          {/* Segmented Native Touch Controller - Multi-Feature Choice for Advisors */}
+          {step === 'welcome' && (
+            <div className="px-4 pb-2 pt-1 z-35 shrink-0">
+              <div className="bg-slate-900/90 p-1 rounded-xl border border-slate-800/80 grid grid-cols-2 text-center text-xs">
+                <button
+                  onClick={() => setActiveAppTab('intake')}
+                  className={`py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                    activeAppTab === 'intake'
+                      ? 'bg-blue-600 text-white shadow-md'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Patient Intake
+                </button>
+                <button
+                  onClick={() => setActiveAppTab('scribe')}
+                  className={`py-1.5 rounded-lg font-bold transition-all cursor-pointer flex items-center justify-center gap-1 ${
+                    activeAppTab === 'scribe'
+                      ? 'bg-blue-600 text-white shadow-md'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Mic className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+                  <span>Doc Dictation</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           <AnimatePresence mode="wait">
             
-            {/* SCREEN 1: Welcome / Branding screen */}
-            {step === 'welcome' && (
+            {/* SCREEN 1: Welcome / Pre-Visit Check-In & Registration Wizard */}
+            {step === 'welcome' && activeAppTab === 'intake' && (
               <motion.div 
                 key="welcome"
                 initial={{ opacity: 0, scale: 0.96 }}
@@ -338,123 +564,540 @@ export default function IntakeMobileApp({ onSendToDoctor, isBackendHealthy, isUs
                 transition={{ duration: 0.25 }}
                 className="absolute inset-0 flex flex-col justify-between p-5 overflow-y-auto"
               >
-                <div className="flex-1 flex flex-col justify-center items-center text-center space-y-6 pt-6">
-                  {/* Glowing Pulse Logo */}
-                  <div className="relative">
-                    <div className="absolute -inset-4 bg-blue-500/30 rounded-full blur-xl animate-pulse" />
-                    <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-blue-600 to-cyan-400 flex items-center justify-center shadow-lg border border-white/10 relative z-10">
-                      <Activity className="w-8 h-8 text-white animate-bounce" />
-                    </div>
-                    {/* Tiny overlay for Scribe */}
-                    <div className="absolute -bottom-1 -right-1 bg-slate-900 p-1.5 rounded-lg border border-slate-700 z-20">
-                      <Sparkles className="w-3.5 h-3.5 text-cyan-400 animate-spin" style={{ animationDuration: '6s' }} />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <h1 className="text-2xl font-extrabold tracking-tight bg-gradient-to-r from-white via-slate-100 to-blue-200 bg-clip-text text-transparent">
-                      DoctorScribe AI
-                    </h1>
-                    <p className="text-[11px] uppercase tracking-wider text-blue-400 font-bold">
-                      Telehealth MVP Series
-                    </p>
-                    <p className="text-slate-300 text-xs px-2 leading-relaxed">
-                      "AI Patient Intake & Medical Documentation Assistant"
-                    </p>
-                  </div>
-
-                  {/* Form inputs container */}
-                  <div id="mobile-intro-form" className="w-full bg-slate-900/60 backdrop-blur-md rounded-2xl p-4 border border-slate-800/80 text-left space-y-3.5 self-stretch">
-                    <span className="text-[11px] font-bold text-slate-400 tracking-wider block uppercase">
-                      Patient Intake Form Setup
-                    </span>
-                    
-                    <div className="space-y-1">
-                      <label className="text-[10px] text-slate-400 font-semibold block">Full Patient Name</label>
-                      <div className="relative">
-                        <User className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-500" />
-                        <input 
-                          type="text" 
-                          value={patientName} 
-                          onChange={(e) => setPatientName(e.target.value)}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-lg py-1.5 pl-9 pr-3 text-xs text-white focus:outline-none focus:border-blue-500"
-                        />
+                {/* Onboarding Mode: Welcome & Patient Select Directory */}
+                {registrationMode === 'onboarding' && (
+                  <div className="flex-1 flex flex-col space-y-4">
+                    <div className="text-center space-y-2 pt-2">
+                      <div className="relative inline-block mx-auto mb-1">
+                        <div className="absolute -inset-2.5 bg-blue-500/20 rounded-full blur-lg animate-pulse" />
+                        <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-blue-600 to-cyan-500 flex items-center justify-center border border-white/10 relative z-10">
+                          <Activity className="w-6 h-6 text-white" />
+                        </div>
                       </div>
+                      <h1 className="text-xl font-black text-white tracking-tight">Clinician check-in pass</h1>
+                      <p className="text-[10px] text-slate-400 max-w-xs mx-auto leading-relaxed">
+                        Register fresh as a new patient to check in, or select an existing active profile from the clinic directory below.
+                      </p>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-slate-400 font-semibold block">Age</label>
-                        <input 
-                          type="number" 
-                          value={patientAge} 
-                          onChange={(e) => setPatientAge(e.target.value)}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-lg py-1.5 px-3 text-xs text-white focus:outline-none focus:border-blue-500"
-                        />
+                    {/* Pre-tracked Patients Directory */}
+                    <div className="space-y-2 bg-slate-900/50 backdrop-blur-md rounded-2xl p-4 border border-slate-800/80">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] font-extrabold text-blue-400 tracking-wider uppercase">
+                          Preloaded Active Directory
+                        </span>
+                        <span className="text-[8px] bg-blue-950 font-bold text-blue-400 px-1.5 py-0.5 rounded-full">
+                          Live Database
+                        </span>
                       </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-slate-400 font-semibold block">Gender</label>
-                        <select 
-                          value={patientGender} 
-                          onChange={(e) => setPatientGender(e.target.value)}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-lg py-1.5 px-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                      
+                      <div className="flex flex-col gap-1.5 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => handleWelcomeDemoChoice("Clara Oswald")}
+                          className="w-full py-2 px-3 text-left rounded-xl bg-slate-950 border border-slate-850 hover:border-blue-500 hover:bg-slate-900 transition-all text-slate-300 flex items-center justify-between cursor-pointer"
                         >
-                          <option value="Male">Male</option>
-                          <option value="Female">Female</option>
-                          <option value="Non-binary">Non-binary</option>
-                          <option value="Other">Other</option>
+                          <div className="flex items-center space-x-2.5">
+                            <div className="w-6 h-6 rounded-full bg-orange-950/80 text-orange-400 flex items-center justify-center font-bold text-[10px] border border-orange-900/30">
+                              CO
+                            </div>
+                            <div className="text-left leading-tight">
+                              <span className="text-[11px] font-bold text-slate-200 block">Clara Oswald</span>
+                              <span className="text-[9px] text-slate-500">64y &bull; Medicare Core &bull; Wheezing</span>
+                            </div>
+                          </div>
+                          <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleWelcomeDemoChoice("Alex Mercer")}
+                          className="w-full py-2 px-3 text-left rounded-xl bg-slate-950 border border-slate-850 hover:border-blue-500 hover:bg-slate-900 transition-all text-slate-300 flex items-center justify-between cursor-pointer"
+                        >
+                          <div className="flex items-center space-x-2.5">
+                            <div className="w-6 h-6 rounded-full bg-blue-950/80 text-blue-400 flex items-center justify-center font-bold text-[10px] border border-blue-900/30">
+                              AM
+                            </div>
+                            <div className="text-left leading-tight">
+                              <span className="text-[11px] font-bold text-slate-200 block">Alex Mercer</span>
+                              <span className="text-[9px] text-slate-500">34y &bull; United Health &bull; Headache</span>
+                            </div>
+                          </div>
+                          <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleWelcomeDemoChoice("Jordan Vance")}
+                          className="w-full py-2 px-3 text-left rounded-xl bg-slate-950 border border-slate-850 hover:border-blue-500 hover:bg-slate-900 transition-all text-slate-300 flex items-center justify-between cursor-pointer"
+                        >
+                          <div className="flex items-center space-x-2.5">
+                            <div className="w-6 h-6 rounded-full bg-teal-950/80 text-teal-400 flex items-center justify-center font-bold text-[10px] border border-teal-900/30">
+                              JV
+                            </div>
+                            <div className="text-left leading-tight">
+                              <span className="text-[11px] font-bold text-slate-200 block">Jordan Vance</span>
+                              <span className="text-[9px] text-slate-500">29y &bull; Aetna Bronze &bull; Fatigue</span>
+                            </div>
+                          </div>
+                          <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        setPatientName("");
+                        setPatientAge("");
+                        setPatientGender("Male");
+                        setPatientPhone("");
+                        setPatientInsurance("Self-Pay");
+                        setChiefComplaintInput("");
+                        setRegistrationMode('form');
+                      }}
+                      className="w-full bg-gradient-to-r from-blue-600 to-cyan-500 text-white font-bold rounded-xl py-2.8 px-4 text-xs flex items-center justify-center space-x-2 shadow-lg hover:brightness-110 active:scale-98 transition-all cursor-pointer"
+                    >
+                      <User className="w-3.5 h-3.5" />
+                      <span>Register & Check-In Fresh</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleFastTrackSummary}
+                      className="w-full bg-slate-900/80 border border-dashed border-blue-500/40 text-blue-400 hover:text-blue-300 rounded-xl py-2.5 px-4 text-[10px] text-center flex items-center justify-center gap-1.5 cursor-pointer mt-1"
+                    >
+                      <Sparkles className="w-3 h-3 text-cyan-400" />
+                      <span>Direct Quick-Generate SOAP Summary</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* Form Mode: Interactive Demographics Input */}
+                {registrationMode === 'form' && (
+                  <div className="flex-1 flex flex-col space-y-3 pt-1">
+                    <span className="text-[10px] font-black text-blue-400 tracking-wider uppercase block">
+                      New Patient Digital Check-In
+                    </span>
+
+                    <div className="bg-slate-900/60 rounded-2xl p-4 border border-slate-800/80 text-left space-y-3 self-stretch flex-1 overflow-y-auto">
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 font-bold block">Patient Full Name</label>
+                        <div className="relative">
+                          <User className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-500" />
+                          <input 
+                            type="text" 
+                            required
+                            placeholder="e.g. Fiona Gallagher"
+                            value={patientName} 
+                            onChange={(e) => setPatientName(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl py-1.5 pl-9 pr-3 text-xs text-white focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-slate-400 font-bold block">Age</label>
+                          <input 
+                            type="number" 
+                            placeholder="Age"
+                            value={patientAge} 
+                            onChange={(e) => setPatientAge(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl py-1.5 px-3 text-xs text-white focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-slate-400 font-bold block">Gender Identify</label>
+                          <select 
+                            value={patientGender} 
+                            onChange={(e) => setPatientGender(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl py-1.5 px-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                          >
+                            <option value="Male">Male</option>
+                            <option value="Female">Female</option>
+                            <option value="Non-binary">Non-binary</option>
+                            <option value="Other">Other</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 font-bold block">Mobile / Callback Phone</label>
+                        <div className="relative">
+                          <PhoneCall className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-500" />
+                          <input 
+                            type="tel" 
+                            placeholder="e.g. 555-0199"
+                            value={patientPhone} 
+                            onChange={(e) => setPatientPhone(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl py-1.5 pl-9 pr-3 text-xs text-white focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 font-bold block">Health Insurance Plan</label>
+                        <select 
+                          value={patientInsurance} 
+                          onChange={(e) => setPatientInsurance(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl py-1.5 px-3 text-xs text-white focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="Self-Pay">Self-Pay / Non-insured</option>
+                          <option value="United Healthcare">United Healthcare</option>
+                          <option value="Aetna Bronze">Aetna Bronze</option>
+                          <option value="Blue Cross Shield">Blue Cross Shield</option>
+                          <option value="Medicare Gold">Medicare Gold</option>
                         </select>
                       </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 font-bold block">Chief Complaint</label>
+                        <input 
+                          type="text" 
+                          value={chiefComplaintInput} 
+                          onChange={(e) => setChiefComplaintInput(e.target.value)}
+                          placeholder="e.g. Chest tightness or pain upon joint strain"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl py-1.5 px-3 text-xs text-white focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
                     </div>
 
-                    <div className="space-y-1">
-                      <label className="text-[10px] text-slate-400 font-semibold block">Chief Complaint</label>
-                      <input 
-                        type="text" 
-                        value={chiefComplaintInput} 
-                        onChange={(e) => setChiefComplaintInput(e.target.value)}
-                        placeholder="e.g. Headache, coughing, throat pain"
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg py-1.5 px-3 text-xs text-white focus:outline-none focus:border-blue-500"
-                      />
+                    <div className="flex gap-2 pt-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setRegistrationMode('onboarding')}
+                        className="py-2.5 px-3 rounded-xl bg-slate-900 border border-slate-800 hover:bg-slate-850 text-slate-300 text-xs font-semibold cursor-pointer"
+                      >
+                        Back
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!patientName.trim()) {
+                            alert("Please enter a Patient Name to continue.");
+                            return;
+                          }
+                          setIsVerifyingCard(true);
+                          setTimeout(() => {
+                            setIsVerifyingCard(false);
+                            setRegistrationMode('card');
+                          }, 900);
+                        }}
+                        className="flex-1 bg-gradient-to-r from-blue-600 to-cyan-500 text-white font-bold rounded-xl py-2.5 px-4 text-xs flex items-center justify-center space-x-1 hover:brightness-105 active:scale-98 transition-all cursor-pointer"
+                      >
+                        {isVerifyingCard ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <ShieldCheck className="w-3.5 h-3.5 text-cyan-200" />
+                        )}
+                        <span>{isVerifyingCard ? "Verifying Plan..." : "Generate Clinic Check-In Pass"}</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Card Mode: Verified Wallet NFC Health Pass */}
+                {registrationMode === 'card' && (
+                  <div className="flex-1 flex flex-col justify-between py-1">
+                    <div className="space-y-4">
+                      <div className="text-center">
+                        <span className="text-[10px] bg-emerald-950 text-emerald-400 py-1 px-3 rounded-full font-bold border border-emerald-900/40 inline-flex items-center gap-1">
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                          <span>Clinic Health ID Verified</span>
+                        </span>
+                      </div>
+
+                      {/* Visually Stunning NFC Health Pass card */}
+                      <div className="relative mx-auto w-full aspect-[1.586/1] rounded-2xl bg-gradient-to-br from-blue-700 via-blue-900 to-slate-950 p-4 border border-white/20 shadow-xl overflow-hidden text-left flex flex-col justify-between">
+                        {/* Shimmer/Overlay design */}
+                        <div className="absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/10 to-transparent pointer-events-none" />
+                        <div className="absolute -right-12 -top-12 w-28 h-28 rounded-full bg-cyan-400/20 blur-xl pointer-events-none" />
+                        
+                        <div className="flex items-start justify-between z-10">
+                          <div className="space-y-0.5">
+                            <span className="text-[8px] uppercase tracking-widest text-blue-300 font-extrabold block">HIPAA Health Passport</span>
+                            <span className="text-[10px] font-bold text-white block">Dr Scribe Virtual ID</span>
+                          </div>
+                          <div className="w-7 h-7 rounded-lg bg-white/15 backdrop-blur-sm border border-white/20 flex items-center justify-center font-black text-cyan-300 text-[10px]">
+                            NFC
+                          </div>
+                        </div>
+
+                        {/* Centered Patient details */}
+                        <div className="space-y-1.5 z-10 pt-1">
+                          <h2 className="text-base font-extrabold text-white tracking-wide truncate">{patientName}</h2>
+                          <div className="grid grid-cols-3 gap-0.5 text-[8px] font-mono text-blue-200">
+                            <div>
+                              <span>AGE / GENDER</span>
+                              <strong className="block text-white font-sans text-[9px] mt-0.5">{patientAge} yrs, {patientGender}</strong>
+                            </div>
+                            <div>
+                              <span>INSURANCE</span>
+                              <strong className="block text-white font-sans text-[9px] mt-0.5 truncate">{patientInsurance}</strong>
+                            </div>
+                            <div>
+                              <span>CALLBACK</span>
+                              <strong className="block text-white font-sans text-[9px] mt-0.5">{patientPhone || "555-0199"}</strong>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Bottom line with barcode simulation */}
+                        <div className="flex items-end justify-between border-t border-white/10 pt-2 mt-1.5 z-10">
+                          {/* Simulated Barcode */}
+                          <div className="flex items-center space-x-0.5 h-4.5 bg-white/10 px-1 py-0.5 rounded">
+                            <div className="w-0.5 h-3 bg-white" />
+                            <div className="w-1 h-3 bg-white" />
+                            <div className="w-0.5 h-3 bg-white" />
+                            <div className="w-0.5 h-3 bg-white" />
+                            <div className="w-1.5 h-3 bg-white" />
+                            <div className="w-0.5 h-3 bg-white" />
+                            <div className="w-1.5 h-3 bg-white" />
+                          </div>
+                          <div className="text-right leading-none">
+                            <span className="text-[7px] text-blue-300 font-mono block">MOCK CARD</span>
+                            <span className="text-[9px] font-bold text-emerald-400 font-sans">Active Approved</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Chief complaint overview */}
+                      <div className="bg-slate-900/60 rounded-xl p-3 border border-slate-850 text-left space-y-1">
+                        <span className="text-[9px] text-slate-500 font-bold block uppercase tracking-wider">Reason for consultation</span>
+                        <p className="text-[11px] text-slate-200 italic">
+                          "{chiefComplaintInput || "Routine pre-visit screening"}"
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Checkbox confirmation and CTA */}
+                    <div className="pt-2 space-y-2.5 shrink-0">
+                      <button 
+                        type="button"
+                        onClick={() => startConsultation(patientName, patientAge, patientGender, chiefComplaintInput)}
+                        className="w-full bg-gradient-to-r from-emerald-500 via-teal-600 to-cyan-500 text-white font-black rounded-2xl py-3 px-4 text-xs flex items-center justify-center space-x-2 shadow-lg shadow-teal-500/15 active:scale-98 transition-all cursor-pointer animate-pulse"
+                      >
+                        <span>Launch AI Symptom Pre-Scribe</span>
+                        <ArrowRight className="w-3.5 h-3.5 text-white" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setRegistrationMode('form')}
+                        className="w-full py-1 text-[10px] text-slate-500 hover:text-slate-300 text-center block"
+                      >
+                        Edit Registration Info
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </motion.div>
+            )}
+
+            {/* SCREEN 1 Option B: Scribe Voice Dictation Console */}
+            {step === 'welcome' && activeAppTab === 'scribe' && (
+              <motion.div 
+                key="voice-scribe"
+                initial={{ opacity: 0, scale: 0.96 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.25 }}
+                className="absolute inset-0 flex flex-col justify-between p-5 overflow-y-auto"
+              >
+                <div className="flex-1 flex flex-col space-y-4 pt-1">
+                  <div className="text-center space-y-1">
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-cyan-950/70 text-cyan-400 border border-cyan-900/60 text-[10px] font-bold uppercase tracking-wider mx-auto">
+                      <Volume2 className="w-3 h-3 text-cyan-400 animate-pulse" />
+                      <span>Physician Dictation Scribe</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 text-center px-1">
+                      Speak doctor-patient notes directly or load a custom clinical scenario to synthesize a SOAP note.
+                    </p>
+                  </div>
+
+                  {/* Visual Soundwave Indicator while listening */}
+                  <div className="bg-slate-900/80 rounded-2xl p-3 border border-slate-800/80 flex flex-col items-center justify-center space-y-3 relative overflow-hidden">
+                    {isRecording ? (
+                      <div className="flex items-center justify-center gap-1 h-8 w-full">
+                        <span className="w-1 h-3 bg-cyan-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                        <span className="w-1.5 h-6 bg-cyan-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                        <span className="w-1 h-4 bg-cyan-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                        <span className="w-1.5 h-7 bg-cyan-400 rounded-full animate-bounce" style={{ animationDelay: '450ms' }} />
+                        <span className="w-1 h-3.5 bg-cyan-400 rounded-full animate-bounce" style={{ animationDelay: '100ms' }} />
+                        <span className="w-1.5 h-5 bg-cyan-400 rounded-full animate-bounce" style={{ animationDelay: '250ms' }} />
+                        <span className="w-1 h-2 bg-cyan-400 rounded-full animate-bounce" style={{ animationDelay: '500ms' }} />
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-center gap-1 h-8 w-full text-slate-700">
+                        <span className="w-1 h-1.5 bg-slate-800 rounded-full" />
+                        <span className="w-1 h-1.5 bg-slate-800 rounded-full" />
+                        <span className="w-1 h-1.5 bg-slate-800 rounded-full" />
+                        <span className="w-1 h-1.5 bg-slate-800 rounded-full" />
+                        <span className="w-1 h-1.5 bg-slate-800 rounded-full" />
+                        <span className="w-1 h-1.5 bg-slate-800 rounded-full" />
+                        <span className="w-1 h-1.5 bg-slate-800 rounded-full" />
+                      </div>
+                    )}
+
+                    <div className="text-center space-y-0.5">
+                      <span className="text-[10px] font-bold text-slate-300 block">
+                        {isRecording ? `Listening live...` : `Microphone Standby`}
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-500 block">
+                        {isRecording ? `${Math.floor(recordingSeconds / 60)}:${(recordingSeconds % 60).toString().padStart(2, '0')}` : '0:00'}
+                      </span>
+                    </div>
+
+                    {/* Microphone Action Button */}
+                    <button
+                      type="button"
+                      onClick={isRecording ? stopRecording : startRecording}
+                      className={`relative p-3 rounded-full transition-all cursor-pointer ${
+                        isRecording 
+                          ? 'bg-red-600 hover:bg-red-500 shadow-lg shadow-red-500/20' 
+                          : 'bg-blue-600 hover:bg-blue-500 shadow-lg shadow-blue-500/20'
+                      }`}
+                    >
+                      {isRecording ? (
+                        <MicOff className="w-5 h-5 text-white" />
+                      ) : (
+                        <Mic className="w-5 h-5 text-white" />
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Live Editable Transcript Display */}
+                  <div className="space-y-1 text-left">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] text-slate-400 font-semibold block uppercase tracking-wider">
+                        Dictated Transcript Outflow
+                      </label>
+                      {isRecording && (
+                        <span className="text-[9px] text-cyan-400 animate-pulse flex items-center gap-1 font-mono">
+                          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" /> Real-time active
+                        </span>
+                      )}
+                    </div>
+                    <textarea
+                      value={scribeTranscript + (interimTranscript ? ` ${interimTranscript}` : "")}
+                      onChange={(e) => {
+                        setScribeTranscript(e.target.value);
+                        setInterimTranscript("");
+                      }}
+                      placeholder="Speak directly, load a simulation script below, or type clinical symptoms manually..."
+                      className="w-full h-24 bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-[11px] text-slate-300 focus:outline-none focus:border-cyan-500 text-left resize-none focus:ring-1 focus:ring-cyan-500/30"
+                    />
+                  </div>
+
+                  {/* Simulation Scripts */}
+                  <div className="space-y-1">
+                    <span className="text-[9px] text-slate-400 font-bold block uppercase pb-0.5 tracking-wider text-center">
+                      Quick-Load Dictation Scripts
+                    </span>
+                    <div className="flex flex-col gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setScribeTranscript("Patient is a 45-year-old active female presenting with severe right knee pain. Felt a sudden pop while playing tennis yesterday evening. Moderate swelling noted over the patellar joint line overnight. Difficulty bearing weight on leg today. History of mild osteoarthritis. Denies locking but sensation of instability is present.");
+                          setPatientName("Fiona Gallagher");
+                          setPatientAge("45");
+                          setPatientGender("Female");
+                          setChiefComplaintInput("Acute tennis knee injury with joint swelling");
+                        }}
+                        className="py-1 px-2 text-[10px] text-left rounded-lg bg-slate-900 border border-slate-800 hover:border-cyan-500 hover:bg-slate-800 transition-all text-slate-300 flex items-center justify-between cursor-pointer"
+                      >
+                        <span className="truncate">Orthopedic Case: Knee Injury Pop</span>
+                        <ChevronRight className="w-3 h-3 text-slate-500 shrink-0" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setScribeTranscript("Jordan Mercer, 64-year-old male presenting for follow-up of hypertension. Reports occasional racing heart beats or palpitations for brief moments during stress. No active chest discomfort, no shortness of breath, no peripheral swelling. Compliance on Lisinopril 20mg is daily and tolerated well.");
+                          setPatientName("Jordan Mercer");
+                          setPatientAge("64");
+                          setPatientGender("Male");
+                          setChiefComplaintInput("Hypertension check and occasional heart racing");
+                        }}
+                        className="py-1 px-2 text-[10px] text-left rounded-lg bg-slate-900 border border-slate-800 hover:border-cyan-500 hover:bg-slate-800 transition-all text-slate-300 flex items-center justify-between cursor-pointer"
+                      >
+                        <span className="truncate">Cardiology Case: Hypertension F/U</span>
+                        <ChevronRight className="w-3 h-3 text-slate-500 shrink-0" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setScribeTranscript("Patient is a 7-year-old female brought by mother. Complains of sudden-onset scratchy throat and high discomfort swallowing since yesterday morning. Low-grade oral fever of 101.4F recorded at home. Denies productive cough or skin lesions. Exposed to classmate with strep throat last week.");
+                          setPatientName("Maya Lin");
+                          setPatientAge("7");
+                          setPatientGender("Female");
+                          setChiefComplaintInput("Acute sore throat and pediatric dysphagia");
+                        }}
+                        className="py-1 px-2 text-[10px] text-left rounded-lg bg-slate-900 border border-slate-800 hover:border-cyan-500 hover:bg-slate-800 transition-all text-slate-300 flex items-center justify-between cursor-pointer"
+                      >
+                        <span className="truncate">Pediatric Case: Sore Throat</span>
+                        <ChevronRight className="w-3 h-3 text-slate-500 shrink-0" />
+                      </button>
                     </div>
                   </div>
                 </div>
 
-                {/* Actions Section */}
-                <div className="space-y-3.5 pt-4">
-                  {/* Quick-tap choices for demonstration convenience */}
-                  <div className="space-y-1 text-center">
-                    <span className="text-[9px] text-slate-400 font-semibold uppercase block tracking-wider">
-                      One-Click Presenter demo load
-                    </span>
-                    <div className="flex flex-col gap-1.5">
-                      {currentPromptSuggestions.map((suggestion, index) => (
-                        <button
-                          key={index}
-                          onClick={() => handleWelcomeDemoChoice(suggestion)}
-                          className="w-full py-1.5 px-3 text-[10px] text-left rounded-lg bg-slate-900 border border-slate-800 hover:border-blue-500 hover:bg-slate-800 transition-all text-slate-300 flex items-center justify-between"
-                        >
-                          <span>{suggestion}</span>
-                          <ChevronRight className="w-3 h-3 text-slate-500 shrink-0" />
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
+                {/* Scribe Action Buttons */}
+                <div className="pt-2.5 space-y-1.5 mt-auto">
                   <button 
-                    onClick={() => startConsultation(patientName, patientAge, patientGender, chiefComplaintInput)}
-                    className="w-full bg-gradient-to-r from-blue-600 to-cyan-500 text-white font-semibold rounded-xl py-3 px-4 text-xs flex items-center justify-center space-x-2 shadow-lg shadow-blue-500/20 active:scale-98 transition-transform cursor-pointer"
+                    type="button"
+                    onClick={async () => {
+                      if (!scribeTranscript.trim()) return;
+                      setStep('generating');
+                      try {
+                        const response = await fetch("/api/clinical/summarize", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            messages: [
+                              { id: "s-1", sender: "ai", text: "Direct Voice Dictation Transcript:", timestamp: "Now" },
+                              { id: "s-2", sender: "patient", text: scribeTranscript, timestamp: "Now" }
+                            ],
+                            patientDetails: {
+                              name: patientName || "Fiona Gallagher",
+                              age: patientAge || "45",
+                              gender: patientGender || "Female",
+                              chiefComplaint: chiefComplaintInput || "Scribe Voice Dictation"
+                            }
+                          })
+                        });
+
+                        const data = await response.json();
+                        setCompiledSummary(data.summary);
+                        setStep('summary');
+                      } catch (e) {
+                        console.error("Failed to generate note from dictation:", e);
+                        setStep('summary');
+                      }
+                    }}
+                    disabled={!scribeTranscript.trim()}
+                    className={`w-full font-bold rounded-xl py-2.5 px-4 text-xs flex items-center justify-center space-x-2 shadow-lg transition-transform cursor-pointer ${
+                      scribeTranscript.trim() 
+                        ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white active:scale-98 shadow-cyan-500/20' 
+                        : 'bg-slate-900 text-slate-500 border border-slate-800 shadow-none cursor-not-allowed'
+                    }`}
                   >
-                    <span>Start Consultation</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
+                    <Sparkles className="w-3.5 h-3.5 text-cyan-400 rotate-12" />
+                    <span>Generate Structured SOAP Note</span>
                   </button>
 
                   <button
-                    onClick={handleFastTrackSummary}
-                    className="w-full bg-slate-900/80 border border-dashed border-blue-500/40 text-blue-400 hover:text-blue-300 rounded-xl py-2 px-4 text-[11px] text-center flex items-center justify-center gap-1.5 cursor-pointer"
+                    type="button"
+                    onClick={() => {
+                      setScribeTranscript("");
+                      setRecordingSeconds(0);
+                    }}
+                    className="w-full py-1 text-[10px] text-slate-500 hover:text-slate-300 text-center block cursor-pointer"
                   >
-                    <Sparkles className="w-3 h-3 text-cyan-400" />
-                    <span>Fast-Track Generated SOAP Note</span>
+                    Clear Dictation Output
                   </button>
                 </div>
               </motion.div>
@@ -835,6 +1478,37 @@ export default function IntakeMobileApp({ onSendToDoctor, isBackendHealthy, isUs
                       <Send className="w-3.5 h-3.5" />
                       <span>{hasSentToDoctor ? "Sent Successfully" : "Send to Doctor"}</span>
                     </button>
+                  </div>
+
+                  {!isEditingSummary && (
+                    <div className="grid grid-cols-2 gap-2 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={handleCopyMobile}
+                        className={`py-1.5 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 border transition ${
+                          isCopiedInMobile
+                            ? 'bg-emerald-950 text-emerald-400 border-emerald-900/60'
+                            : 'bg-slate-900 text-slate-300 border-slate-800 hover:bg-slate-820 cursor-pointer'
+                        }`}
+                      >
+                        {isCopiedInMobile ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                        <span>{isCopiedInMobile ? "Copied!" : "Copy Summary"}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleDownloadPDFMobile}
+                        className="py-1.5 px-2 rounded-lg bg-slate-900 hover:bg-slate-820 border border-slate-800 text-slate-300 font-bold text-[10px] flex items-center justify-center gap-1 cursor-pointer"
+                      >
+                        <Download className="w-3 h-3 text-cyan-400" />
+                        <span>Download PDF</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Safety Disclaimer */}
+                  <div className="text-[9px] text-slate-450 leading-tight text-center bg-slate-950 p-2 rounded-lg border border-slate-900">
+                    This tool assists with patient intake only and does not provide diagnosis or treatment recommendations.
                   </div>
 
                   {hasSentToDoctor && (

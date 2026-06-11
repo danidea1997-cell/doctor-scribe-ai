@@ -101,6 +101,149 @@ Alert, speaking in full sentences. Mild nasal sounding tone. Respiratory rate fe
   }
 };
 
+// --- INTEGRATED HIGH-FIDELITY AUTOMATIC FALLBACK ENGINE ---
+function generateProgrammaticFallbackSummary(conversationText: string, patientDetails: any) {
+  const name = patientDetails?.name || "Patient Intake Scribe";
+  const age = patientDetails?.age || "N/A";
+  const gender = patientDetails?.gender || "N/A";
+  const rawComplaint = patientDetails?.chiefComplaint || "";
+  
+  const lowerText = conversationText.toLowerCase();
+  
+  let chiefComplaint = rawComplaint;
+  let symptoms: string[] = [];
+  let duration = "Not specified";
+  let currentMedications = "None reported";
+  let medicalHistory = "None reported";
+  let subjective = "";
+  let assessment = "";
+  let plan = "";
+
+  // 1. Check for Knee Injury
+  if (lowerText.includes("knee") || lowerText.includes("pop") || lowerText.includes("tennis")) {
+    chiefComplaint = chiefComplaint || "Right knee pain following athletic joint strain";
+    symptoms = [
+      "Severe localized right knee patellar joint pain",
+      "Sudden audible popping sensation while playing tennis yesterday",
+      "Pronounced mild-to-moderate joint swelling overnight",
+      "Significant difficulty bearing weight on the affected leg today",
+      "Subjective feeling of instability when attempting movement"
+    ];
+    duration = "1 day";
+    currentMedications = "None active; reports ibuprofen taken occasionally";
+    medicalHistory = "Mild osteoarthritis; active structural lifestyle";
+    subjective = `The patient is a ${age}-year-old ${gender} presenting with acute right knee pain after hearing a "pop" during a tennis match. Moderate localized swelling emerged over the patellar joint line overnight. Complains of difficulty bearing weight. Sensation of joint instability is present.`;
+    assessment = `1. **Acute Traumatic Right Knee Sprain:** High suspicion of cruciate/collateral ligament sprain (possible ACL or meniscus tear) given the distinct mechanical pop and sudden weight-bearing restriction, vs. patellar subluxation.\n2. **Degenerative Joint Disease:** Background of mild osteoarthritis.`;
+    plan = `1. **Evaluation:** Follow up immediately with Orthopedic Specialist or Urgent Care today for full knee exam (Lachman, Anterior Drawer, McMurray tests).\n2. **Diagnostic Imaging:** Obtain plain knee films (X-ray) to rule out bony fracture; schedule MRI to evaluate ligamentous and meniscal integrity.\n3. **Supportive Care:** Strict conservative Rest, Ice, Compression, Elevation (RICE) therapy. Limit weight-bearing using crutches if severely painful.\n4. **Red Flags:** Advise presentation to Emergency Dept if knee becomes cold/pale, experiences paresthesias, or if a high fever (>102°F) develops.`;
+  } 
+  // 2. Check for Cardiology / Hypertension
+  else if (lowerText.includes("hypertension") || lowerText.includes("palpitations") || lowerText.includes("heart racing") || lowerText.includes("mercer")) {
+    chiefComplaint = chiefComplaint || "Hypertension follow-up with intermittent palpitations";
+    symptoms = [
+      "Intermittent rapid heartbeats (fluttering, brief racing sensations)",
+      "Occasional brief palpitations precipitated during elevated stress",
+      "No active chest discomfort or chest pain",
+      "No shortness of breath (dyspnea) or lower extremity peripheral swelling"
+    ];
+    duration = "Recurrent brief episodes over past 2 weeks";
+    currentMedications = "Lisinopril 20mg once daily (reports good compliance)";
+    medicalHistory = "Essential Primary Hypertension (diagnosed 2023)";
+    subjective = `The patient is a ${age}-year-old ${gender} presenting for a scheduled check of primary hypertension. Reports brief palpitations and racing heart rate triggered during periods of higher anxiety or work stress. No chest pressure, dizziness, or pedal edema. High-compliance user of Lisinopril.`;
+    assessment = `1. **Primary Essential Hypertension:** Clinically controlled on active Lisinopril regimen.\n2. **Palpitations:** Occasional, likely stress-induced benign ectopy (PACs/PVCs) vs. early paroxysmal atrial fibrillation/arrhythmia.`;
+    plan = `1. **Assessment:** Document blood pressure metrics. Secure a baseline 12-lead ECG in-office.\n2. **Cardiology Screening:** Consider 24-hour ambulatory Holter monitor if racing beats amplify or recur.\n3. **Workup:** Order basic metabolic panel, serum electrolytes, and thyroid panel (TSH) to explore systemic causes.\n4. **Lifestyle:** Counsel on stress management, avoidance of chemical stimulants (nicotine, high caffeine), and regular hydration.\n5. **Red Flags:** Seek emergency medical services for crushing chest pain, radiation of distress, acute dyspnea, or syncope.`;
+  } 
+  // 3. Check for Sore Throat / Pediatric
+  else if (lowerText.includes("sore throat") || lowerText.includes("dysphagia") || lowerText.includes("swallowing") || lowerText.includes("strep")) {
+    chiefComplaint = chiefComplaint || "Acute pharyngitis and throat dysphagia";
+    symptoms = [
+      "Severe scratchy throat and pain with swallowing since yesterday",
+      "Mild temperature elevations (oral fever up to 101.4°F)",
+      "Absence of productive cough or skin rashes",
+      "Positive exposure to a classmate diagnosed with active Strep throat last week"
+    ];
+    duration = "2 days, sudden onset";
+    currentMedications = "None daily; alternating pediatric paracetamol";
+    medicalHistory = "Otherwise healthy child with no major historic illnesses";
+    subjective = `The patient is a ${age}-year-old ${gender} presented by parent for severe, sudden-onset sore throat and painful swallowing. Low-grade fever noted at home. Exposed to streptococcal pharyngitis at school. Denies cough, rhinorrhea, or earache.`;
+    assessment = `1. **Acute Pharyngitis:** High risk for Group A Streptococcal Pharyngitis (Strep throat) given positive exposure, dysphagia, fever, and absence of cough (Modified Centor Criteria high), vs. common viral pharyngitis.`;
+    plan = `1. **Diagnostics:** Advise rapid antigen detection test (RADT) and throat swab culture in-office today.\n2. **Therapy:** Recommend appropriate raw antibiotic course (e.g., Penicillin V or Amoxicillin) if antigen test yields positive results.\n3. **Symptom Care:** Support comfortable oral hydration with cold fluids, honey, or throat lozenges. Alternating weight-appropriate paracetamol.\n4. **Red Flags:** Instruct parents to present immediately to ED for drooling, inability to swallow liquids, dyspnea, or severe neck stiffness.`;
+  } 
+  // 4. Default Tailored Headaches or Cough/Cold
+  else {
+    const isHeadache = lowerText.includes("headache") || lowerText.includes("migraine") || lowerText.includes("head");
+    chiefComplaint = chiefComplaint || (isHeadache ? "Throbbing left temporal headache with low-grade pyrexia" : "Seasonal allergy flare and congestion");
+    
+    symptoms = isHeadache ? [
+      "Moderate-to-severe (7/10) pulsating pain over left temporal region",
+      "Low-grade fever (100.2°F/37.9°C)",
+      "Mild sensitivity to bright lights (photophobia)",
+      "Associated mild nausea without active emesis"
+    ] : [
+      "Severe general exhaustion / fatigue, especially mornings",
+      "Mild seasonal nasal congestion and congestion",
+      "Persistent scratchy throat irritation",
+      "Occasional dry cough and sleep disruption"
+    ];
+    
+    duration = isHeadache ? "3 days, gradual onset" : "5 days";
+    currentMedications = isHeadache ? "Ibuprofen 400mg occasionally (partial transient relief)" : "None active";
+    medicalHistory = isHeadache ? "Controlled baseline hypertension, maternal migraine history" : "Allergic rhinitis";
+    
+    subjective = isHeadache 
+      ? `The patient is a ${age}-year-old ${gender} presenting with a 3-day history of throbbing left-sided temporal headache (intensity 7/10). Associated low-grade fever, photosensitivity, and nausea are present. Uses occasional ibuprofen.` 
+      : `The patient is a ${age}-year-old ${gender} describing a 5-day history of seasonal congestion, morning fatigue, scratchy throat, and a non-productive cough. Fluctuates with climate.`;
+
+    assessment = isHeadache 
+      ? `1. **Acute Temporal Headache:** Differential includes migraine without aura vs. tension headache with viral syndrome, vs. early sinusitis.\n2. **Hypertension:** Stable history.`
+      : `1. **Allergic Rhinitis:** Exacerbation of environmental allergies with possible minor viral rhinovirus overlap.`;
+
+    plan = isHeadache 
+      ? `1. **Evaluation:** Suggest primary care evaluation today to perform reflex screening and check for neck stiffness.\n2. **Comfort:** Rest in a quiet, darkened room. Alternate tylenol and fluids.\n3. **Red Flags:** Seek emergency evaluation for sudden peak 'thunderclap' headache, rigid neck, high fever, or vision loss.`
+      : `1. **Supportive:** Recommend trial of second-generation antihistamine daily and saline nasal spray.\n2. **Follow-up:** Re-assess with primary care provider if congestion lasts past 14 days or chest tightens.`;
+  }
+
+  const generatedSOAP = `### CLINICAL SOAP NOTE (Intelligent Fallback Engine)
+
+**SUBJECTIVE (S):**
+${subjective}
+
+**OBJECTIVE (O):**
+* Patient reports listed symptoms.
+* No raw physical evaluation performed (Pre-screening telehealth intake dialogue session).
+* Vital signs (subjective report): Mentone temperature and blood pressure currently controlled.
+
+**ASSESSMENT (A):**
+${assessment}
+
+**PLAN (P):**
+${plan}`;
+
+  return {
+    patientName: name,
+    patientAge: age,
+    patientGender: gender,
+    chiefComplaint,
+    symptoms,
+    duration,
+    currentMedications,
+    medicalHistory,
+    clinicalSummary: generatedSOAP
+  };
+}
+
+// Helper to race a promise with a timeout to prevent hanging when primary model experiences high load
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMessage = "Request timed out"): Promise<T> {
+  let timeoutId: NodeJS.Timeout;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(errorMessage));
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
+}
+
 // --- API ENDPOINTS ---
 
 // AI Intake followup questions endpoint
@@ -108,58 +251,83 @@ app.post("/api/clinical/chat", async (req, res) => {
   const { messages, userResponse, currentStepName } = req.body;
   const ai = getGeminiClient();
 
-  if (!ai) {
-    // Elegant fallback simulation responses based on consultation phase if Gemini is not set up
-    let reply = "I understand. Could you tell me if you are currently taking any medications or have any allergies?";
+  // Basic simulation response mapping
+  const getSimulationReply = () => {
     if (currentStepName === 'chat_complaint') {
-      reply = "Got it. How long have you been experiencing this headache and fever? Did it start suddenly or gradually?";
+      return "Got it. How long have you been experiencing this headache and fever? Did it start suddenly or gradually?";
     } else if (currentStepName === 'chat_duration') {
-      reply = "On a scale of 1-10, how severe is the pain, and how would you describe it? (e.g., throbbing, sharp, constant or coming in waves?)";
+      return "On a scale of 1-10, how severe is the pain, and how would you describe it? (e.g., throbbing, sharp, constant or coming in waves?)";
     } else if (currentStepName === 'chat_severity') {
-      reply = "That sounds quite uncomfortable. Are you currently taking any prescription medications, or over-the-counter drugs? Also, do you have any allergies?";
+      return "That sounds quite uncomfortable. Are you currently taking any prescription medications, or over-the-counter drugs? Also, do you have any allergies?";
     } else if (currentStepName === 'chat_medications') {
-      reply = "Thank you. Lastly, do you have any pre-existing medical conditions, or is there a family history of migraines, high blood pressure, or diabetes?";
+      return "Thank you. Lastly, do you have any pre-existing medical conditions, or is there a family history of migraines, high blood pressure, or diabetes?";
     } else if (currentStepName === 'chat_history') {
-      reply = "Thank you for sharing. I am compiling all of this information now to generate your structured clinical summary of symptoms and medical history.";
+      return "Thank you for sharing. I am compiling all of this information now to generate your structured clinical summary of symptoms and medical history.";
     }
-    return res.json({ reply, source: "simulation_engine" });
+    return "I understand. Could you tell me if you are currently taking any medications or have any allergies?";
+  };
+
+  if (!ai) {
+    return res.json({ reply: getSimulationReply(), source: "simulation_engine" });
   }
 
-  try {
-    const chatHistory = messages.map((m: any) => ({
-      role: m.sender === 'ai' ? 'user' : 'model', // inverted to represent standard chat format correctly
-      parts: [{ text: m.text }]
-    }));
-
-    // Add prompt instructions
-    const systemInstruction = `You are DoctorScribe AI, a world-class, professional medical intake assistant for our telehealth and clinical MVP.
+  const systemInstruction = `You are DoctorScribe AI, a world-class, professional medical intake assistant for our telehealth and clinical MVP.
 Your job is to gather a complete clinical picture from the patient prior to their doctor's visit. 
 Be highly empathetic, clinical, precise, and concise. Your replies must be 1-2 sentences. 
 Target this step: ${currentStepName}. 
 Ensure you ask follow-up questions about symptoms, duration, intensity, medications, and relevant medical history in an orderly, polite healthcare manner.
 Do not make assumptions, do not prescribe medications, do not state diagnostics, and do not alarm the patient.`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: [
-        ...messages.map((m: any) => `${m.sender === 'ai' ? 'AI Assistant' : 'Patient'}: ${m.text}`),
-        `Patient Response: ${userResponse}`,
-        `AI Intake Assistant (generate next relevant clinical question, polite, empathetic, 1-2 sentence maximum):`
-      ].join("\n"),
-      config: {
-        systemInstruction,
-        temperature: 0.3,
-      }
-    });
+  const messagesPrompt = [
+    ...messages.map((m: any) => `${m.sender === 'ai' ? 'AI Assistant' : 'Patient'}: ${m.text}`),
+    `Patient Response: ${userResponse}`,
+    `AI Intake Assistant (generate next relevant clinical question, polite, empathetic, 1-2 sentence maximum):`
+  ].join("\n");
+
+  // Attempt main model
+  try {
+    const response = await withTimeout(
+      ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: messagesPrompt,
+        config: {
+          systemInstruction,
+          temperature: 0.3,
+        }
+      }),
+      8000,
+      "gemini-3.5-flash timed out"
+    );
 
     const reply = response.text || "Thank you. Let's proceed to the next detail.";
-    return res.json({ reply, source: "gemini_api" });
+    return res.json({ reply, source: "gemini_api_3.5" });
   } catch (error: any) {
-    console.error("Gemini Chat API Error:", error);
-    return res.json({ 
-      reply: "Thank you for that information. Let's capture your medication details and active allergies now.",
-      source: "error_fallback_engine" 
-    });
+    console.warn("Primary model 'gemini-3.5-flash' failed or timed out, trying fallback model 'gemini-3.1-flash-lite'. Error details:", error.message || error);
+    
+    // Retry with gemini-3.1-flash-lite
+    try {
+      const response = await withTimeout(
+        ai.models.generateContent({
+          model: "gemini-3.1-flash-lite",
+          contents: messagesPrompt,
+          config: {
+            systemInstruction,
+            temperature: 0.3,
+          }
+        }),
+        8000,
+        "gemini-3.1-flash-lite timed out"
+      );
+
+      const reply = response.text || "Thank you. Let's proceed to the next detail.";
+      return res.json({ reply, source: "gemini_api_3.1_lite" });
+    } catch (fallbackError: any) {
+      console.error("Secondary model 'gemini-3.1-flash-lite' failed too, falling back to local simulation.", fallbackError.message || fallbackError);
+      return res.json({ 
+        reply: getSimulationReply(),
+        source: "error_fallback_engine" 
+      });
+    }
   }
 });
 
@@ -170,39 +338,21 @@ app.post("/api/clinical/summarize", async (req, res) => {
 
   const conversationText = messages
     ? messages.map((m: any) => `${m.sender === 'ai' ? 'DoctorScribe AI' : 'Patient'}: ${m.text}`).join("\n")
-    : "Headache, low-grade fever.";
-
-  // Determine key complaint to tailor mock matching
-  const hasHeadache = conversationText.toLowerCase().includes("headache") || (patientDetails?.chiefComplaint || "").toLowerCase().includes("head");
-  const fallbackKey = hasHeadache ? "headache" : "general";
-  const defaultFallback = fallbackSummaries[fallbackKey];
+    : (patientDetails?.chiefComplaint || "Routine symptoms pre-check.");
 
   if (!ai) {
-    // Generate simulated note customized to whatever they typed or provided
-    const name = patientDetails?.name || defaultFallback.patientName;
-    const age = patientDetails?.age || defaultFallback.patientAge;
-    const gender = patientDetails?.gender || defaultFallback.patientGender;
-    
-    // Customize base response with entered detail
-    const customized = {
-      ...defaultFallback,
-      patientName: name,
-      patientAge: age,
-      patientGender: gender,
-      chiefComplaint: patientDetails?.chiefComplaint || defaultFallback.chiefComplaint,
-    };
-    return res.json({ summary: customized, source: "simulation_engine" });
+    const parsedFallback = generateProgrammaticFallbackSummary(conversationText, patientDetails);
+    return res.json({ summary: parsedFallback, source: "simulation_engine" });
   }
 
-  try {
-    const prompt = `Review the clinical conversation below between our Medical Intake Scribe and the Patient. 
+  const prompt = `Review the clinical conversation below between our Medical Intake Scribe and the Patient. 
 Generate a beautifully structured, highly professional Clinical Summary.
 Ensure your response adheres exactly to this JSON schema layout:
 
 {
-  "patientName": "Patient's full name (Use '${patientDetails?.name || "Alex Mercer"}' if found, or extract from dialogue)",
-  "patientAge": "Patient's age (Use '${patientDetails?.age || "34"}' or extract)",
-  "patientGender": "Patient's gender (Use '${patientDetails?.gender || "Male"}' or extract)",
+  "patientName": "Patient's full name (Use '${patientDetails?.name || ""}' if found, or extract from dialogue)",
+  "patientAge": "Patient's age (Use '${patientDetails?.age || ""}' or extract)",
+  "patientGender": "Patient's gender (Use '${patientDetails?.gender || ""}' or extract)",
   "chiefComplaint": "A concise professional medical summary of the main reason for the visit",
   "symptoms": ["List specific symptoms reported by the patient as separate bullet points"],
   "duration": "Duration of symptoms as stated",
@@ -216,53 +366,70 @@ ${conversationText}
 
 Ensure clinicalSummary contains high-fidelity clinical terminology, structured with clear markdown headings, bold sections, and distinct paragraphs for optimal readability. Do not include any HTML styles or code wrapping other than clean raw JSON format.`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            patientName: { type: Type.STRING },
-            patientAge: { type: Type.STRING },
-            patientGender: { type: Type.STRING },
-            chiefComplaint: { type: Type.STRING },
-            symptoms: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING }
-            },
-            duration: { type: Type.STRING },
-            currentMedications: { type: Type.STRING },
-            medicalHistory: { type: Type.STRING },
-            clinicalSummary: { type: Type.STRING }
-          },
-          required: ["patientName", "patientAge", "patientGender", "chiefComplaint", "symptoms", "duration", "currentMedications", "medicalHistory", "clinicalSummary"]
+  const schemaConfig = {
+    responseMimeType: "application/json",
+    responseSchema: {
+      type: Type.OBJECT,
+      properties: {
+        patientName: { type: Type.STRING },
+        patientAge: { type: Type.STRING },
+        patientGender: { type: Type.STRING },
+        chiefComplaint: { type: Type.STRING },
+        symptoms: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING }
         },
-        temperature: 0.1
-      }
-    });
+        duration: { type: Type.STRING },
+        currentMedications: { type: Type.STRING },
+        medicalHistory: { type: Type.STRING },
+        clinicalSummary: { type: Type.STRING }
+      },
+      required: ["patientName", "patientAge", "patientGender", "chiefComplaint", "symptoms", "duration", "currentMedications", "medicalHistory", "clinicalSummary"]
+    },
+    temperature: 0.1
+  };
+
+  // Attempt main model (gemini-3.5-flash) with 10 seconds timeout
+  try {
+    const response = await withTimeout(
+      ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: prompt,
+        config: schemaConfig
+      }),
+      10000,
+      "gemini-3.5-flash timed out"
+    );
 
     const parsed = JSON.parse(response.text || "{}");
-    return res.json({ summary: parsed, source: "gemini_api" });
+    return res.json({ summary: parsed, source: "gemini_api_3.5" });
   } catch (error: any) {
-    console.error("Gemini Summarize API Error:", error);
-    // Safe response fallback
-    const name = patientDetails?.name || defaultFallback.patientName;
-    const age = patientDetails?.age || defaultFallback.patientAge;
-    const gender = patientDetails?.gender || defaultFallback.patientGender;
-    const customized = {
-      ...defaultFallback,
-      patientName: name,
-      patientAge: age,
-      patientGender: gender,
-      chiefComplaint: patientDetails?.chiefComplaint || defaultFallback.chiefComplaint,
-    };
-    return res.json({ 
-      summary: customized, 
-      source: "error_fallback_engine",
-      errorMessage: error.message 
-    });
+    console.warn("Primary model 'gemini-3.5-flash' failed or timed out during summarize, trying backup model 'gemini-3.1-flash-lite'. Error details:", error.message || error);
+    
+    // Attempt backup model (gemini-3.1-flash-lite) with 10 seconds timeout
+    try {
+      const response = await withTimeout(
+        ai.models.generateContent({
+          model: "gemini-3.1-flash-lite",
+          contents: prompt,
+          config: schemaConfig
+        }),
+        10000,
+        "gemini-3.1-flash-lite timed out"
+      );
+
+      const parsed = JSON.parse(response.text || "{}");
+      return res.json({ summary: parsed, source: "gemini_api_3.1_lite" });
+    } catch (fallbackError: any) {
+      console.error("Secondary backup model 'gemini-3.1-flash-lite' failed too, running dynamic fallback note generator.", fallbackError.message || fallbackError);
+      
+      const parsedFallback = generateProgrammaticFallbackSummary(conversationText, patientDetails);
+      return res.json({ 
+        summary: parsedFallback, 
+        source: "error_fallback_engine",
+        errorMessage: fallbackError.message || "All models unavailable"
+      });
+    }
   }
 });
 
